@@ -4,7 +4,7 @@
 
 <img src="image.jpg_debug.jpg" width="25%">
 
-[Blendshapes JSON](mediapipe_blendshape_labeler/image.jpg_blendshapes.json)
+[Perfect Sync - 52 Blendshapes JSON](mediapipe_blendshape_labeler/image.jpg_blendshapes.json)
 
 # Install
 
