@@ -1,0 +1,176 @@
+# Transfer Learning Scheme from mediapipe blendshapes to whisper
+# The Whisper model is defined such that input audio sequences are padded/truncated to 30s
+
+WhisperX: Time-Accurate Speech Transcription of Long-Form Audio
+
+input_features:
+    - name: speech_spectrogram_hidden_states
+      type: vector
+    - name: transcribed_speech
+      type: text
+output_features:
+    - name: speech_spectrogram_hidden_states
+      type: vector
+      tied_weights: true
+    - name: transcribed_speech
+      type: text
+      tied_weights: true
+    - name: browDownLeft
+      type: vector
+      size: 900
+    - name: browDownRight
+      type: vector
+      size: 900
+    - name: browlnnerUp
+      type: vector
+      size: 900
+    - name: browOuterUpLeft
+      type: vector
+      size: 900
+    - name: browOuterUpRight
+      type: vector
+      size: 900
+    - name: cheekPuff
+      type: vector
+      size: 900
+    - name: cheekSquintLeft
+      type: vector
+      size: 900
+    - name: cheekSquintRight
+      type: vector
+      size: 900
+    - name: eyeBlinkLeft
+      type: vector
+      size: 900
+    - name: eyeBlinkRight
+      type: vector
+      size: 900
+    - name: eyeLookDownLeft
+      type: vector
+      size: 900
+    - name: eyeLookDownRight
+      type: vector
+      size: 900
+    - name: eyeLookinLeft
+      type: vector
+      size: 900
+    - name: eyeLookInRight
+      type: vector
+      size: 900
+    - name: eyeLookOutLeft
+      type: vector
+      size: 900
+    - name: eyeLookOutRight
+      type: vector
+      size: 900
+    - name: eyeLookUpLeft
+      type: vector
+      size: 900
+    - name: eyeLookUpRight
+      type: vector
+      size: 900
+    - name: eyeSquintLeft
+      type: vector
+      size: 900
+    - name: eyeSquintRight
+      type: vector
+      size: 900
+    - name: eyeWideLeft
+      type: vector
+      size: 900
+    - name: eyeWideRight
+      type: vector
+      size: 900
+    - name: jawForward
+      type: vector
+      size: 900
+    - name: jawLeft
+      type: vector
+      size: 900
+    - name: jawOpen
+      type: vector
+      size: 900
+    - name: jawRight
+      type: vector
+      size: 900
+    - name: mouthClose
+      type: vector
+      size: 900
+    - name: mouthDimpleLeft
+      type: vector
+      size: 900
+    - name: mouthDimpleRight
+      type: vector
+      size: 900
+    - name: mouthFrownLeft
+      type: vector
+      size: 900
+    - name: mouthFrownRight
+      type: vector
+      size: 900
+    - name: mouthFunnel
+      type: vector
+      size: 900
+    - name: mouthLeft
+      type: vector
+      size: 900
+    - name: mouthLowerDownLeft
+      type: vector
+      size: 900
+    - name: mouthLowerDownRight
+      type: vector
+      size: 900
+    - name: mouthPressLeft
+      type: vector
+      size: 900
+    - name: mouthPressRight
+      type: vector
+      size: 900
+    - name: mouthPucker
+      type: vector
+      size: 900
+    - name: mouthRight
+      type: vector
+      size: 900
+    - name: mouthRollLower
+      type: vector
+      size: 900
+    - name: mouthRollUpper
+      type: vector
+      size: 900
+    - name: mouthShrugLower
+      type: vector
+      size: 900
+    - name: mouthShrugUpper
+      type: vector
+      size: 900
+    - name: mouthSmileLeft
+      type: vector
+      size: 900
+    - name: mouthSmileRight
+      type: vector
+      size: 900
+    - name: mouthStretchLeft
+      type: vector
+      size: 900
+    - name: mouthStretchRight
+      type: vector
+      size: 900
+    - name: mouthUpperUpLeft
+      type: vector
+      size: 900
+    - name: mouthUpperUpRight
+      type: vector
+      size: 900
+    - name: noseSneerLeft
+      type: vector
+      size: 900
+    - name: noseSneerRight
+      type: vector
+      size: 900
+    - name: tongueOut
+      type: vector
+      size: 900
+preprocessing:
+    missing_value_strategy: fill_with_const
+    missing_value_fill: 0.0

@@ -1,0 +1,11 @@
+build:
+  gpu: false
+  system_packages:
+    - "libgl1-mesa-glx"
+    - "libglib2.0-0"
+  python_version: "3.11"
+  python_packages:
+    - "torch==2.0.1"
+    - "mediapipe==0.10.3"
+    - "matplotlib"
+predict: "predict.py:Predictor"

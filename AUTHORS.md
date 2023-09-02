@@ -1,0 +1,1 @@
+We list contributors in [all-contributorsrc](.all-contributorsrc).
