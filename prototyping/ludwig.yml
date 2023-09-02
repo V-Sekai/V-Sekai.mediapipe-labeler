@@ -1,8 +1,6 @@
 # Transfer Learning Scheme from mediapipe blendshapes to whisper
 # The Whisper model is defined such that input audio sequences are padded/truncated to 30s
 
-WhisperX: Time-Accurate Speech Transcription of Long-Form Audio
-
 input_features:
     - name: speech_spectrogram_hidden_states
       type: vector
