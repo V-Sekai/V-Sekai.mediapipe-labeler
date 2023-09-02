@@ -98,7 +98,7 @@ class Predictor(BasePredictor):
         with open(blendshapes_json_path, 'w') as f:
             json.dump(blendshapes, f, indent=4, sort_keys=True)
 
-        return tuple[Path(blendshapes_json_path), Path(debug_img_path)]
+        return (Path(blendshapes_json_path), Path(debug_img_path))
 
 if __name__ == "__main__":
     predictor = Predictor()
