@@ -14,9 +14,8 @@ This is a replicate.com [cog](https://github.com/replicate/cog).
 # Install
 
 ```zsh
-brew install cog
-# Optional
-#wget -O thirdparty/face_landmarker_v2_with_blendshapes.task -q https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task
+# Install cog
+# Predict the blend shapes of an image.
 cog predict -i image=@./thirdparty/image.jpg
 ```
 
