@@ -7,6 +7,8 @@
 
 This is a Mediapipe workflow that performs blendshape labeling on images. The workflow utilizes the Mediapipe framework, which provides a flexible and efficient infrastructure for building multimodal applied machine learning models.
 
+[Now on replicate -- live.](https://replicate.com/fire/v-sekai.mediapipe-labeler)
+
 <img src="Screenshot 2023-09-03 065500.png" width="25%"> <img src="thirdparty/image.jpg" width="25%">
 
 [Perfect Sync - 52 Blendshapes JSON](output.json)
