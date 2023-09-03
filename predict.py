@@ -86,8 +86,13 @@ class Predictor(BasePredictor):
 
         debug_img_path = os.path.join(script_dir, f"{os.path.basename(image_path)}_debug.jpg")
         cv2.imwrite(debug_img_path, cv2.cvtColor(annotated_image, cv2.COLOR_RGB2BGR))
-        
-        blendshapes = [{"category_name": category.category_name, "score": '{:.20f}'.format(category.score) if abs(category.score) > 1e-9 else '0.00000000000000000000'} for category in detection_result.face_blendshapes[0]] if detection_result.face_blendshapes else []
+
+        blendshapes = []
+        if detection_result.face_blendshapes:
+            for category in detection_result.face_blendshapes[0]:
+                score = '{:.20f}'.format(category.score) if abs(category.score) > 1e-9 else '0.00000000000000000000'
+                blendshapes.append({"category_name": category.category_name, "score": score})
+
         return Output(debug_image=Path(debug_img_path), blendshapes=str(
             json.dumps(blendshapes, indent=4, sort_keys=True)))
 
