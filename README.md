@@ -5,6 +5,8 @@
 
 **WORK IN PROGRESS**
 
+This is a replicate.com [cog](https://github.com/replicate/cog).
+
 <img src="image.jpg_debug.jpg" width="25%">
 
 [Perfect Sync - 52 Blendshapes JSON](mediapipe_blendshape_labeler/image.jpg_blendshapes.json)
