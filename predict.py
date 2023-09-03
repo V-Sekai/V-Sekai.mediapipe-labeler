@@ -89,7 +89,7 @@ class Predictor(BasePredictor):
         with open(blendshapes_json_path, 'w') as f:
             json.dump(blendshapes, f, indent=4, sort_keys=True)
 
-        return [Path(blendshapes_json_path), Path(debug_img_path)]
+        return [File(blendshapes_json_path), File(debug_img_path)]
 
     def predict(self, image: Path = Input(description="RGB input image")) -> list:
         return self.run(image)
