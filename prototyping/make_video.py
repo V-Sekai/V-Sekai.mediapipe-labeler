@@ -6,7 +6,12 @@ import argparse
 import re
 import tempfile
 import numpy as np
+import shutil
+import locale
 
+locale.setlocale(locale.LC_ALL, '')
+
+from operator import itemgetter
 class FileStruct:
     def __init__(self):
         self.wave_file = None
@@ -16,134 +21,118 @@ class FileStruct:
         self.wave_file = wave_file
 
     def add_png(self, png_file):
-        self.png_files.append({"png_file": png_file, "wave_file": self.wave_file})
+        if not any(file[0] == png_file for file in self.png_files):
+            self.png_files.append((png_file, self.wave_file))
+            
+    def sort_png_files(self):
+        self.png_files.sort(key=itemgetter(0))  # Sort by PNG file name
 
     def print(self):
         print(f"Wave file: {self.wave_file}")
         print("PNG files:")
-        for png_dict in self.png_files:
-            print(f"PNG file: {png_dict['png_file']}, Wave file: {png_dict['wave_file']}")
-
-
-def get_script_dir():
-    return os.path.dirname(os.path.realpath(__file__))
-
-def process_directory(dir):
-    if not os.path.isdir(dir):
-        return
-    print(f"Processing {dir}")
-    print("Directory contents before processing:")
-    print(os.listdir(dir))
-    
-    # Create an instance of FileStruct
-    file_struct = FileStruct()
-
-    for trial_dir in glob.glob(os.path.join(dir, 'trial_*')):
-        # Process each trial directory and get the filled FileStruct
-        trial_file_struct = process_trial(trial_dir)
-        
-        # If there is a wave file in the trial directory, add it to the main FileStruct
-        if trial_file_struct.wave_file:
-            file_struct.add_wave(trial_file_struct.wave_file)
-        
-        # Sort png_files based on sequence number extracted from filename
-        trial_file_struct.png_files.sort(key=lambda f: int(re.search(r'(\d+)_(\d+)_(\d+)_(\d+)_(\d+)_(\d+)_(\d+).png$', f['png_file']).group(5)) if re.search(r'(\d+)_(\d+)_(\d+)_(\d+)_(\d+)_(\d+)_(\d+).png$', f['png_file']) else 0)
-                
-        # Add all png files from the trial directory to the main FileStruct
-        for i, png_file in enumerate(trial_file_struct.png_files):
-            file_struct.add_png(png_file)
-
-    return file_struct
+        for png_tuple in self.png_files:
+            print(f"PNG file: {png_tuple[0]}, Wave file: {png_tuple[1]}")
 
 def sort_key_func(item):
-    parts = item.split("_")
-    
-    # Ensure there are enough parts in the filename
-    if len(parts) < 7:
-        return [0]*7
+    # Split the filename into parts
+    parts = re.split(r'(\d+)', item)
 
-    keys = []
-    for part in parts[:7]:
-        try:
-            # Try to convert each part to an integer
-            keys.append(int(part))
-        except ValueError:
-            # If a part cannot be converted into an integer, ignore it
-            keys.append(0)
+    # Convert numeric parts to integers
+    parts[1::2] = map(int, parts[1::2])
 
-    return keys
-
-def process_trial(trial_dir):
-    # Create an instance of FileStruct
-    file_struct = FileStruct()
-
-    if not os.path.isdir(trial_dir):
-        return file_struct
-
-    print(f"Processing {trial_dir}")
-    trial_num = trial_dir.split('_')[-1]
-    
-    # Only look for .png and .wav files
-    mic_files_1 = glob.glob(os.path.join(trial_dir, "mic1_audio_cmd_trim/*.wav"))
-    mic_files_2 = glob.glob(os.path.join(trial_dir, "mic2_audio_cmd_trim/*.wav"))
-    
-    png_files_rgb = glob.glob(os.path.join(trial_dir, "rgb_image_cmd/*.png"))
-    png_files_thr = glob.glob(os.path.join(trial_dir, "thr_image_cmd/*.png"))
-    
-    all_files = mic_files_1 + mic_files_2 + png_files_rgb + png_files_thr
-
-    # Add the first wave file to the FileStruct
-    if mic_files_1:
-        file_struct.add_wave(mic_files_1[0])
-    elif mic_files_2:
-        file_struct.add_wave(mic_files_2[0])
-
-    # Add all png files to the FileStruct
-    for png_file in png_files_rgb + png_files_thr:
-        file_struct.add_png(png_file)
-    file_struct.print()
-    return file_struct
-
-def process_command_id(cmd_id, mic_files, png_files_rgb, png_files_thr, trial_dir):
-    mic_files_cmd = [f for f in mic_files if re.search(r'(\d+)_(\d+)_(\d+)_(\d+)_(\d+)_(\d+).wav$', f).group(1) == cmd_id]
-    png_files_rgb_cmd = [f for f in png_files_rgb if re.search(r'(\d+)_(\d+)_(\d+)_(\d+)_(\d+)_(\d+)_(\d+).png$', f).group(1) == cmd_id]
-    png_files_thr_cmd = [f for f in png_files_thr if re.search(r'(\d+)_(\d+)_(\d+)_(\d+)_(\d+)_(\d+)_(\d+).png$', f).group(1) == cmd_id]
-    if len(mic_files_cmd) == 0:
-        return
-    num_images_per_audio = len(png_files_rgb_cmd) // len(mic_files_cmd)
-    for mic_file in mic_files_cmd:
-        process_mic_file(mic_file, cmd_id, num_images_per_audio, png_files_rgb_cmd, png_files_thr_cmd, trial_dir, mic_files_cmd)
-
-def process_mic_file(mic_file, cmd_id, num_images_per_audio, png_files_rgb_cmd, png_files_thr_cmd, trial_dir, mic_files_cmd):
-    script_dir = get_script_dir()
-    mic_num = os.path.splitext(os.path.basename(mic_file))[0].split('_')[-1]
-    start_index = mic_files_cmd.index(mic_file) * num_images_per_audio
-    end_index = start_index + num_images_per_audio
-
-    for rgb_file in png_files_rgb_cmd[start_index:end_index]:
-        output_file_rgb = os.path.join(script_dir, f"{trial_dir}_rgb_cmd{cmd_id}_mic{mic_num}_video.mkv")
-        print(f"Running ffmpeg with output file {output_file_rgb}")
-
-        with tempfile.NamedTemporaryFile(mode='w', delete=False) as f:
-            f.write('\n'.join(f"file '{x}'" for x in png_files_rgb_cmd[start_index:end_index]))
-            print(f"Files to concat: {png_files_rgb_cmd[start_index:end_index]}")  # Debugging line
-            subprocess.run(['ffmpeg', '-y', '-f', 'concat', '-safe', '0', '-i', f.name, '-r', '24', '-i', mic_file, '-c:v', 'ffv1', '-level', '3', '-g', '1', '-slices', '24', '-slicecrc', '1', '-c:a', 'flac', '-shortest', output_file_rgb])
-            os.unlink(f.name)
-
-    for thr_file in png_files_thr_cmd[start_index:end_index]:
-        output_file_thr = os.path.join(script_dir, f"{trial_dir}_thr_cmd{cmd_id}_mic{mic_num}_video.mkv")
-        print(f"Running ffmpeg with output file {output_file_thr}")
-
-        with tempfile.NamedTemporaryFile(mode='w', delete=False) as f:
-            f.write('\n'.join(f"file '{x}'" for x in png_files_thr_cmd[start_index:end_index]))
-            print(f"Files to concat: {png_files_thr_cmd[start_index:end_index]}")  # Debugging line
-            subprocess.run(['ffmpeg', '-y', '-f', 'concat', '-safe', '0', '-i', f.name, '-r', '24', '-i', mic_file, '-c:v', 'ffv1', '-level', '3', '-g', '1', '-slices', '24', '-slicecrc', '1', '-c:a', 'flac', '-shortest', output_file_thr])
-            os.unlink(f.name)
+    # Return a tuple of parts
+    return tuple(parts)
 
 def main(root_dir):
-    script_dir = get_script_dir()
+    script_dir = os.path.dirname(os.path.realpath(__file__))
+    
+    # Create a list to store FileStruct instances
+    file_structs = []
+
     for dir in glob.glob(os.path.join(root_dir, 'sub_*_ia')):
-        process_directory(dir)
+        if not os.path.isdir(dir):
+            continue
+        print(f"Processing {dir}")
+        print("Directory contents before processing:")
+        print(os.listdir(dir))
+
+        for trial_dir in glob.glob(os.path.join(dir, 'trial_*')):
+            # Process each trial directory and get the filled FileStruct
+            file_struct_rgb = FileStruct()
+            file_struct_thr = FileStruct()
+
+            if not os.path.isdir(trial_dir):
+                continue
+
+            print(f"Processing {trial_dir}")
+            trial_num = trial_dir.split('_')[-1]
+
+            mic_files_1 = sorted(glob.glob(os.path.join(trial_dir, "mic1_audio_cmd_trim/*.wav")), key=sort_key_func)
+            mic_files_2 = sorted(glob.glob(os.path.join(trial_dir, "mic2_audio_cmd_trim/*.wav")), key=sort_key_func)
+
+            png_files_rgb = sorted(glob.glob(os.path.join(trial_dir, "rgb_image_cmd_aligned/*.png")), key=sort_key_func)
+            png_files_thr = sorted(glob.glob(os.path.join(trial_dir, "thr_image_cmd_aligned/*.png")), key=sort_key_func)
+            all_files = mic_files_1 + mic_files_2 + png_files_rgb + png_files_thr
+
+            # Add the first wave file to the FileStruct
+            if mic_files_1:
+                file_struct_rgb.add_wave(mic_files_1[0])
+                file_struct_thr.add_wave(mic_files_1[0])
+            elif mic_files_2:
+                file_struct_rgb.add_wave(mic_files_2[0])
+                file_struct_thr.add_wave(mic_files_2[0])
+
+            # Add all png files to the FileStruct
+            for png_file in png_files_rgb:
+                file_struct_rgb.add_png(png_file)
+            for png_file in png_files_thr:
+                file_struct_thr.add_png(png_file)
+
+            file_struct_rgb.sort_png_files()
+            file_struct_rgb.print()
+            file_struct_thr.sort_png_files()
+            file_struct_thr.print()
+
+            # Add the processed FileStruct to the list
+            file_structs.append(file_struct_rgb)
+            file_structs.append(file_struct_thr)
+
+    # Call process_mic_files function here
+    for file_struct in file_structs:
+        mic_file = file_struct.wave_file
+
+        # Raise an exception if mic_file is None
+        if mic_file is None:
+            raise ValueError("No wave file found")
+
+        cmd_id, mic_num = os.path.splitext(os.path.basename(mic_file))[0].split('_')[:2]
+        num_images_per_audio = len(file_struct.png_files)
+
+        # Create a dictionary to store png files by their prefix
+        png_files_by_prefix = {}
+
+        for i in range(num_images_per_audio):
+            png_file, _ = file_struct.png_files[i]  # Access the first element of the tuple
+            prefix = os.path.splitext(os.path.basename(png_file))[0].split('_')[0]
+
+            if prefix not in png_files_by_prefix:
+                png_files_by_prefix[prefix] = []
+
+            png_files_by_prefix[prefix].append(png_file)
+
+        for prefix, png_files in png_files_by_prefix.items():
+            output_file = os.path.join(script_dir, f"{cmd_id}_mic{mic_num}_video_{prefix}.mkv")
+            print(f"Running ffmpeg with output file {output_file}")
+
+            # Create a temporary directory
+            with tempfile.TemporaryDirectory() as temp_dir:
+                # Copy all png files to the temporary directory
+                for png_file in png_files:
+                    shutil.copy2(png_file, temp_dir)
+
+                # Run ffmpeg on the copied png files
+                subprocess.run(['ffmpeg', '-y', '-pattern_type', 'glob', '-i', os.path.join(temp_dir, '*.png'), '-r', '24', '-i', mic_file, '-c:v', 'ffv1', '-level', '3', '-g', '1', '-slices', '24', '-slicecrc', '1', '-c:a', 'flac', '-shortest', output_file])
+        file_struct.print()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Process some directories.')
