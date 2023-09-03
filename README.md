@@ -7,8 +7,7 @@
 
 This is a replicate.com [cog](https://github.com/replicate/cog).
 
-<img src="Screenshot 2023-09-03 065500.png" width="25%"> 
-<img src="thirdparty/image.jpg" width="25%">
+<img src="Screenshot 2023-09-03 065500.png" width="25%"> <img src="thirdparty/image.jpg" width="25%">
 
 [Perfect Sync - 52 Blendshapes JSON](mediapipe_blendshape_labeler/image.jpg_blendshapes.json)
 
