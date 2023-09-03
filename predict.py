@@ -24,10 +24,14 @@ from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 from mediapipe.framework.formats import landmark_pb2
 from mediapipe import solutions
-from cog import BasePredictor, Input, Path
+from cog import BasePredictor, Input, Path, BaseModel, File
 import torch
 import csv
 import os
+
+class Output(BaseModel):
+    debug_image: Path
+    blendshapes: Path
 
 class Predictor(BasePredictor):
     def setup(self):
@@ -89,9 +93,10 @@ class Predictor(BasePredictor):
         with open(blendshapes_json_path, 'w') as f:
             json.dump(blendshapes, f, indent=4, sort_keys=True)
 
-        return [File(blendshapes_json_path), File(debug_img_path)]
+        return Output(debug_image=Path(debug_img_path), blendshapes=Path(blendshapes_json_path))
 
-    def predict(self, image: Path = Input(description="RGB input image")) -> list:
+
+    def predict(self, image: Path = Input(description="RGB input image")) -> Output:
         return self.run(image)
 
 if __name__ == "__main__":
