@@ -9,5 +9,6 @@ build:
     - "mediapipe==0.10.3"
     - "matplotlib"
     - "natsort"
+    - "pillow"
 
 predict: "predict.py:Predictor"
