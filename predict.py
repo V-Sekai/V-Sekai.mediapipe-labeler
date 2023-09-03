@@ -30,8 +30,8 @@ import csv
 import os
 
 class Output(BaseModel):
-    debug_image: Path
     blendshapes: str
+    debug_image: Path
 
 class Predictor(BasePredictor):
     def setup(self):
