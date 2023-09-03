@@ -13,24 +13,39 @@ from natsort import natsorted
 locale.setlocale(locale.LC_ALL, '')
 
 from operator import itemgetter
+
 class FileStruct:
     def __init__(self):
         self.wave_file = None
         self.png_files = []
+        self.command_id = None  # New attribute to store the command id
 
     def add_wave(self, wave_file):
+        cmd_id = os.path.splitext(os.path.basename(wave_file))[0].split('_')[4]  # Extract the command id from the filename
+        if self.command_id is not None and self.command_id != cmd_id:
+            print(f"Error: Attempted to add wave file with different command id ({cmd_id}) to FileStruct with command id {self.command_id}")
+            self.print()
+            return
+        self.command_id = cmd_id  # Store the command id
         self.wave_file = wave_file
 
     def add_png(self, png_file):
+        cmd_id = os.path.splitext(os.path.basename(png_file))[0].split('_')[4]  # Extract the command id from the filename
+        if self.command_id != cmd_id:
+            print(f"Error: Attempted to add PNG file with different command id ({cmd_id}) to FileStruct with command id {self.command_id}")
+            print(f"PNG file: {png_file}")
+            self.print()
+            return
         if not any(file[0] == png_file for file in self.png_files):
             self.png_files.append((png_file, self.wave_file))
-            
+
     def print(self):
         print(f"Wave file: {self.wave_file}")
         print("PNG files:")
         for png_tuple in self.png_files:
             print(f"PNG file: {png_tuple[0]}, Wave file: {png_tuple[1]}")
-            
+
+
 def main(root_dir):
     script_dir = os.path.dirname(os.path.realpath(__file__))
     
