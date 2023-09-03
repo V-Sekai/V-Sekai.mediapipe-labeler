@@ -38,10 +38,6 @@ class Predictor(BasePredictor):
     def setup(self):
         pass
 
-    def predict(self, image: Path = Input(description="RGB input image")) -> tuple[Path, Path]:
-        processed_image = self.run(str(image))
-        return processed_image
-
     def draw_landmarks_on_image(self, rgb_image, detection_result):
         face_landmarks_list = detection_result.face_landmarks
         annotated_image = np.copy(rgb_image)
@@ -83,22 +79,22 @@ class Predictor(BasePredictor):
                                             output_facial_transformation_matrixes=True,
                                             num_faces=1)
         detector = vision.FaceLandmarker.create_from_options(options)
-        image = mp.Image.create_from_file(image_path)
+        image = mp.Image.create_from_file(str(image_path))
         detection_result = detector.detect(image)
         annotated_image = self.draw_landmarks_on_image(image.numpy_view(), detection_result)
 
         script_dir = os.path.dirname(os.path.realpath(__file__))
 
-        debug_img_path = os.path.join(script_dir, f"{os.path.basename(image_path)}_debug.jpg")
-        cv2.imwrite(debug_img_path, cv2.cvtColor(annotated_image, cv2.COLOR_RGB2BGR))
-        
         blendshapes = [{"category_name": category.category_name, "score": '{:.20f}'.format(category.score) if abs(category.score) > 1e-9 else '0.00000000000000000000'} for category in detection_result.face_blendshapes[0]]
         blendshapes_json_path = os.path.join(script_dir, f"{os.path.basename(image_path)}_blendshapes.json")
 
         with open(blendshapes_json_path, 'w') as f:
             json.dump(blendshapes, f, indent=4, sort_keys=True)
 
-        return (Path(blendshapes_json_path), Path(debug_img_path))
+        return Path(blendshapes_json_path)
+
+    def predict(self, image: Path = Input(description="RGB input image")) -> Path:
+        return self.run(image)
 
 if __name__ == "__main__":
     predictor = Predictor()
