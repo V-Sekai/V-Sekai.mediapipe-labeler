@@ -73,6 +73,9 @@ class Predictor(BasePredictor):
         return annotated_image
 
 
+    from PIL import Image
+
+
     def run(self, image_path):
         base_options = python.BaseOptions(model_asset_path='thirdparty/face_landmarker_v2_with_blendshapes.task')
         options = vision.FaceLandmarkerOptions(base_options=base_options,
@@ -82,16 +85,22 @@ class Predictor(BasePredictor):
         detector = vision.FaceLandmarker.create_from_options(options)
         image = mp.Image.create_from_file(str(image_path))
         detection_result = detector.detect(image)
-        annotated_image = self.draw_landmarks_on_image(image.numpy_view(), detection_result)
-        opencv_image = cv2.cvtColor(np.array(annotated_image), cv2.COLOR_RGB2BGR)
+        np_image = image.numpy_view()
+        orig_image = Image.open(image_path).convert('RGB')
+        annotated_image = self.draw_landmarks_on_image(np.array(orig_image), detection_result)
+        annotated_pil_image = Image.fromarray(annotated_image)
+        
+        opencv_image = cv2.cvtColor(np.array(annotated_pil_image), cv2.COLOR_RGB2BGR)
         script_dir = os.path.dirname(os.path.realpath(__file__))
         debug_img_path = os.path.join(script_dir, f"{os.path.basename(image_path)}_debug.jpg")        
         cv2.imwrite(debug_img_path, opencv_image)        
+        
         blendshapes = []
         if detection_result.face_blendshapes:
             for category in detection_result.face_blendshapes[0]:
                 score = '{:.20f}'.format(category.score) if abs(category.score) > 1e-9 else '0.00000000000000000000'
                 blendshapes.append({"category_name": category.category_name, "score": score})
+        
         return Output(debug_image=Path(debug_img_path), blendshapes=str(json.dumps(blendshapes, indent=4, sort_keys=True)))
 
 
