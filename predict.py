@@ -67,7 +67,7 @@ class Predictor(BasePredictor):
 
         return annotated_image
 
-    def predict(self, image_path: Path = Input(description="RGB input image")) -> dict[str, Path]:
+    def run(self, image_path):
         base_options = python.BaseOptions(model_asset_path='thirdparty/face_landmarker_v2_with_blendshapes.task')
         options = vision.FaceLandmarkerOptions(base_options=base_options,
                                             output_face_blendshapes=True,
@@ -89,10 +89,10 @@ class Predictor(BasePredictor):
         with open(blendshapes_json_path, 'w') as f:
             json.dump(blendshapes, f, indent=4, sort_keys=True)
 
-        return {
-            "blendshapes_json": Path(blendshapes_json_path),
-            "debug_img": Path(debug_img_path)
-        }
+        return (Path(blendshapes_json_path), Path(debug_img_path))
+
+    def predict(self, image: Path = Input(description="RGB input image")) -> tuple[Path, Path]:
+        return self.run(image)
 
 if __name__ == "__main__":
     predictor = Predictor()
