@@ -173,7 +173,7 @@ def main(root_dir):
                             shutil.copy2(png_file, temp_dir)
                         
                         # Run ffmpeg on the copied png files
-                        subprocess.run(['ffmpeg', '-y', '-pattern_type', 'glob', '-i', os.path.join(temp_dir, '*.png'), '-r', '28', '-i', file_struct.wave_file, '-c:v', 'ffv1', '-level', '3', '-g', '1', '-slices', '24', '-slicecrc', '1', '-c:a', 'flac', '-shortest', output_file])
+                        subprocess.run(['ffmpeg', '-y', '-pattern_type', 'glob', '-r', '28', '-i', os.path.join(temp_dir, '*.png'), '-i', file_struct.wave_file, '-c:v', 'ffv1', '-level', '3', '-g', '1', '-slices', '24', '-slicecrc', '1', '-c:a', 'flac', '-shortest', output_file])
                     
                     file_struct.print()
 
