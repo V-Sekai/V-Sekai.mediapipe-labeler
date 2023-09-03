@@ -80,15 +80,18 @@ class Predictor(BasePredictor):
 
         script_dir = os.path.dirname(os.path.realpath(__file__))
 
+        debug_img_path = os.path.join(script_dir, f"{os.path.basename(image_path)}_debug.jpg")
+        cv2.imwrite(debug_img_path, cv2.cvtColor(annotated_image, cv2.COLOR_RGB2BGR))
+        
         blendshapes = [{"category_name": category.category_name, "score": '{:.20f}'.format(category.score) if abs(category.score) > 1e-9 else '0.00000000000000000000'} for category in detection_result.face_blendshapes[0]]
         blendshapes_json_path = os.path.join(script_dir, f"{os.path.basename(image_path)}_blendshapes.json")
 
         with open(blendshapes_json_path, 'w') as f:
             json.dump(blendshapes, f, indent=4, sort_keys=True)
 
-        return Path(blendshapes_json_path)
+        return (Path(blendshapes_json_path), Path(debug_img_path))
 
-    def predict(self, image: Path = Input(description="RGB input image")) -> Path:
+    def predict(self, image: Path = Input(description="RGB input image")) -> tuple[Path, Path]:
         return self.run(image)
 
 if __name__ == "__main__":
