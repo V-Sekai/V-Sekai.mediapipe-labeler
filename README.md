@@ -5,11 +5,13 @@
 
 **WORK IN PROGRESS**
 
-This is a replicate.com [cog](https://github.com/replicate/cog).
+This is a Mediapipe workflow that performs blendshape labeling on images. The workflow utilizes the Mediapipe framework, which provides a flexible and efficient infrastructure for building multimodal applied machine learning models.
 
 <img src="Screenshot 2023-09-03 065500.png" width="25%"> <img src="thirdparty/image.jpg" width="25%">
 
 [Perfect Sync - 52 Blendshapes JSON](output.json)
+
+**Model File**: [Link to Model Card Blendshape V2.pdf](https://storage.googleapis.com/mediapipe-assets/Model%20Card%20Blendshape%20V2.pdf)
 
 # Install
 
