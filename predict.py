@@ -33,11 +33,6 @@ class Predictor(BasePredictor):
     def setup(self):
         pass
 
-
-class Predictor(BasePredictor):
-    def setup(self):
-        pass
-
     def draw_landmarks_on_image(self, rgb_image, detection_result):
         face_landmarks_list = detection_result.face_landmarks
         annotated_image = np.copy(rgb_image)
