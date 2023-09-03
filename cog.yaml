@@ -8,4 +8,6 @@ build:
     - "torch==2.0.1"
     - "mediapipe==0.10.3"
     - "matplotlib"
+    - "natsort"
+
 predict: "predict.py:Predictor"

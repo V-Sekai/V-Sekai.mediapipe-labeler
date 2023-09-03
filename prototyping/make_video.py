@@ -8,6 +8,7 @@ import tempfile
 import numpy as np
 import shutil
 import locale
+from natsort import natsorted
 
 locale.setlocale(locale.LC_ALL, '')
 
@@ -24,30 +25,19 @@ class FileStruct:
         if not any(file[0] == png_file for file in self.png_files):
             self.png_files.append((png_file, self.wave_file))
             
-    def sort_png_files(self):
-        self.png_files.sort(key=itemgetter(0))  # Sort by PNG file name
-
     def print(self):
         print(f"Wave file: {self.wave_file}")
         print("PNG files:")
         for png_tuple in self.png_files:
             print(f"PNG file: {png_tuple[0]}, Wave file: {png_tuple[1]}")
-
-def sort_key_func(item):
-    # Split the filename into parts
-    parts = re.split(r'(\d+)', item)
-
-    # Convert numeric parts to integers
-    parts[1::2] = map(int, parts[1::2])
-
-    # Return a tuple of parts
-    return tuple(parts)
-
+            
 def main(root_dir):
     script_dir = os.path.dirname(os.path.realpath(__file__))
     
     # Create a list to store FileStruct instances
     file_structs = []
+
+    last_cmd_number = None  # Store the last command number
 
     for dir in glob.glob(os.path.join(root_dir, 'sub_*_ia')):
         if not os.path.isdir(dir):
@@ -57,22 +47,22 @@ def main(root_dir):
         print(os.listdir(dir))
 
         for trial_dir in glob.glob(os.path.join(dir, 'trial_*')):
-            # Process each trial directory and get the filled FileStruct
-            file_struct_rgb = FileStruct()
-            file_struct_thr = FileStruct()
-
             if not os.path.isdir(trial_dir):
                 continue
 
             print(f"Processing {trial_dir}")
             trial_num = trial_dir.split('_')[-1]
 
-            mic_files_1 = sorted(glob.glob(os.path.join(trial_dir, "mic1_audio_cmd_trim/*.wav")), key=sort_key_func)
-            mic_files_2 = sorted(glob.glob(os.path.join(trial_dir, "mic2_audio_cmd_trim/*.wav")), key=sort_key_func)
+            mic_files_1 = natsorted(glob.glob(os.path.join(trial_dir, "mic1_audio_cmd_trim/*.wav")))
+            mic_files_2 = natsorted(glob.glob(os.path.join(trial_dir, "mic2_audio_cmd_trim/*.wav")))
 
-            png_files_rgb = sorted(glob.glob(os.path.join(trial_dir, "rgb_image_cmd_aligned/*.png")), key=sort_key_func)
-            png_files_thr = sorted(glob.glob(os.path.join(trial_dir, "thr_image_cmd_aligned/*.png")), key=sort_key_func)
+            png_files_rgb = natsorted(glob.glob(os.path.join(trial_dir, "rgb_image_cmd_aligned/*.png")))
+            png_files_thr = natsorted(glob.glob(os.path.join(trial_dir, "thr_image_cmd_aligned/*.png")))
             all_files = mic_files_1 + mic_files_2 + png_files_rgb + png_files_thr
+            
+            # Initialize the first FileStruct
+            file_struct_rgb = FileStruct()
+            file_struct_thr = FileStruct()
 
             # Add the first wave file to the FileStruct
             if mic_files_1:
@@ -84,13 +74,25 @@ def main(root_dir):
 
             # Add all png files to the FileStruct
             for png_file in png_files_rgb:
+                # Extract the command number from the filename
+                cmd_number = int(png_file.split('_')[-4])
+
+                # If the command number is different from the last one, create a new FileStruct
+                if cmd_number != last_cmd_number:
+                    file_struct_rgb = FileStruct()
+                    file_struct_thr = FileStruct()
+                    file_struct_rgb.add_wave(mic_files_1[0] if mic_files_1 else mic_files_2[0])
+                    file_struct_thr.add_wave(mic_files_1[0] if mic_files_1 else mic_files_2[0])
+                    file_structs.append(file_struct_rgb)
+                    file_structs.append(file_struct_thr)
+
                 file_struct_rgb.add_png(png_file)
+                last_cmd_number = cmd_number  # Update the last command number
+
             for png_file in png_files_thr:
                 file_struct_thr.add_png(png_file)
 
-            file_struct_rgb.sort_png_files()
             file_struct_rgb.print()
-            file_struct_thr.sort_png_files()
             file_struct_thr.print()
 
             # Add the processed FileStruct to the list
