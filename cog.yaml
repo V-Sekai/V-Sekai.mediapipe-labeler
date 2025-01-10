@@ -5,8 +5,8 @@ build:
     - "libglib2.0-0"
   python_version: "3.11"
   python_packages:
-    - "torch==2.0.1"
-    - "mediapipe==0.10.3"
+    - "torch"
+    - "mediapipe"
     - "matplotlib"
     - "natsort"
     - "pillow"

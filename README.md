@@ -18,7 +18,8 @@ This is a Mediapipe workflow that performs blendshape labeling on images. The wo
 # Install
 
 ```zsh
-# Install cog
+sudo curl -o /usr/local/bin/cog -L https://github.com/replicate/cog/releases/latest/download/cog_`uname -s`_`uname -m`
+sudo chmod +x /usr/local/bin/cog
 # Predict the blend shapes of an image.
 cog predict -i image_path=@./thirdparty/image.jpg
 ```
