@@ -14,6 +14,7 @@
 
 import cv2
 import json
+from PIL import ImageDraw, ImageFont
 import numpy as np
 import os
 import sys
@@ -574,33 +575,32 @@ class Predictor(BasePredictor):
         )
 
     def create_debug_image(self, img_np: np.ndarray, all_results: list) -> Path:
-        annotated = img_np.copy()
-        skeleton_connections = [
-            (16, 14),
-            (14, 12),
-            (17, 15),
-            (15, 13),
-            (12, 13),
-            (6, 12),
-            (7, 13),
-            (6, 7),
-            (6, 8),
-            (7, 9),
-            (8, 10),
-            (9, 11),
-            (2, 3),
-            (1, 2),
-            (1, 3),
-            (2, 4),
-            (3, 5),
-            (4, 6),
-            (5, 7),
-        ]
+        # Convert numpy array to PIL Image
+        annotated = Image.fromarray(img_np)
+        draw = ImageDraw.Draw(annotated)
+
+        # Define colors
+        colors = {
+            "green": (0, 255, 0),
+            "blue": (255, 0, 0),
+            "red": (0, 0, 255),
+            "orange": (255, 165, 0),
+            "yellow": (255, 255, 0),
+            "magenta": (255, 0, 255),
+        }
+
+        # Define font (requires PIL's default font)
+        try:
+            font = ImageFont.truetype("arial.ttf", 15)
+        except:
+            font = ImageFont.load_default()
 
         for result in all_results:
             # Draw bounding box
             startX, startY, endX, endY = result["box"]
-            cv2.rectangle(annotated, (startX, startY), (endX, endY), (0, 255, 0), 2)
+            draw.rectangle(
+                [(startX, startY), (endX, endY)], outline=colors["green"], width=2
+            )
 
             # Get keypoints data
             coco_data = result["coco"]["annotations"][0]
@@ -612,10 +612,33 @@ class Predictor(BasePredictor):
                 y = int(keypoints[i + 1])
                 vis = keypoints[i + 2]
                 if vis > 0:
-                    color = (255, 0, 0) if i < 17 * 3 else (0, 0, 255)  # Body vs face
-                    cv2.circle(annotated, (x, y), 4, color, -1)
+                    color = colors["blue"] if i < 17 * 3 else colors["red"]
+                    bbox = [(x - 4, y - 4), (x + 4, y + 4)]
+                    draw.ellipse(bbox, fill=color, outline=None)
 
             # Draw skeleton connections
+            skeleton_connections = [
+                (16, 14),
+                (14, 12),
+                (17, 15),
+                (15, 13),
+                (12, 13),
+                (6, 12),
+                (7, 13),
+                (6, 7),
+                (6, 8),
+                (7, 9),
+                (8, 10),
+                (9, 11),
+                (2, 3),
+                (1, 2),
+                (1, 3),
+                (2, 4),
+                (3, 5),
+                (4, 6),
+                (5, 7),
+            ]
+
             for i, j in skeleton_connections:
                 idx_i = i * 3
                 idx_j = j * 3
@@ -626,28 +649,38 @@ class Predictor(BasePredictor):
                 x2, y2, v2 = keypoints[idx_j : idx_j + 3]
 
                 if v1 > 0 and v2 > 0:
-                    cv2.line(
-                        annotated,
-                        (int(x1), int(y1)),
-                        (int(x2), int(y2)),
-                        (255, 165, 0),
-                        2,
-                    )  # Orange connections
+                    draw.line(
+                        [(int(x1), int(y1)), (int(x2), int(y2))],
+                        fill=colors["orange"],
+                        width=2,
+                    )
 
             # Draw person ID
             label = f"Person {result['person_id']} ({coco_data['num_keypoints']} pts)"
-            cv2.putText(
-                annotated,
-                label,
-                (startX, startY - 10),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,
-                (0, 255, 0),
-                2,
-            )
+            draw.text((startX, startY - 20), label, fill=colors["green"], font=font)
+
+            # Draw hand landmarks
+            hands = result.get("hands", {})
+            w, h = annotated.size
+
+            # Draw left hand landmarks (yellow)
+            for landmark in hands.get("left", []):
+                if landmark["name"]:
+                    x = int(landmark["x"] * w)
+                    y = int(landmark["y"] * h)
+                    bbox = [(x - 4, y - 4), (x + 4, y + 4)]
+                    draw.ellipse(bbox, fill=colors["yellow"], outline=None)
+
+            # Draw right hand landmarks (magenta)
+            for landmark in hands.get("right", []):
+                if landmark["name"]:
+                    x = int(landmark["x"] * w)
+                    y = int(landmark["y"] * h)
+                    bbox = [(x - 4, y - 4), (x + 4, y + 4)]
+                    draw.ellipse(bbox, fill=colors["magenta"], outline=None)
 
         debug_path = "/tmp/debug_output.jpg"
-        Image.fromarray(annotated).save(debug_path)
+        annotated.save(debug_path)
         return Path(debug_path)
 
     def aggregate_coco(self, results, width, height):
