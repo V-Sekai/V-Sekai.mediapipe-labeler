@@ -361,45 +361,47 @@ class FullBodyProcessor:
         height, width = image_size
 
         if pose:
+            # Add virtual neck point (average of shoulders)
+            neck = None
             for idx, lmk in enumerate(pose.landmark):
-                keypoints.append(
-                    {
-                        "id": idx,
-                        "name": f"body_{idx}",
-                        "position": [lmk.x * width, lmk.y * height, lmk.z * width],
-                        "parent": FullBodyProcessor.get_parent(idx),
-                    }
-                )
+                keypoints.append({
+                    "id": idx,
+                    "name": f"body_{idx}",
+                    "position": [lmk.x * width, lmk.y * height, lmk.z * width],
+                    "parent": FullBodyProcessor.get_parent(idx)
+                })
+                
+                # Store shoulder positions for neck calculation
+                if idx == 11:  # Left shoulder
+                    left_shoulder = lmk
+                elif idx == 12:  # Right shoulder
+                    right_shoulder = lmk
 
-        facial_map = {
-            151: 33,
-            334: 34,
-            46: 35,
-            276: 36,
-            159: 37,
-            386: 38,
-            145: 39,
-            374: 40,
-            13: 41,
-            14: 42,
-            61: 43,
-            291: 44,
-        }
+            # Create neck keypoint
+            if left_shoulder and right_shoulder:
+                neck_x = (left_shoulder.x + right_shoulder.x) / 2 * width
+                neck_y = (left_shoulder.y + right_shoulder.y) / 2 * height
+                neck_z = (left_shoulder.z + right_shoulder.z) / 2 * width
+                keypoints.append({
+                    "id": 33,
+                    "name": "neck",
+                    "position": [neck_x, neck_y, neck_z],
+                    "parent": 0  # Connect neck to nose
+                })
 
-        if face:
-            for mp_idx, facs_id in facial_map.items():
-                if mp_idx < len(face):
-                    lmk = face[mp_idx]
-                    keypoints.append(
-                        {
-                            "id": facs_id,
-                            "name": COCO_KEYPOINT_NAMES[facs_id - 17],
-                            "position": [lmk.x * width, lmk.y * height, lmk.z * width],
-                            "parent": 0,
-                        }
-                    )
-
-        return {"keypoints": keypoints}
+        # Update hierarchy
+        @staticmethod
+        def get_parent(idx):
+            hierarchy = {
+                11: 33,  # Left shoulder -> neck
+                12: 33,  # Right shoulder -> neck
+                33: 0,   # Neck -> nose
+                # Keep other connections the same
+                13: 11, 14: 12, 15: 13, 16: 14,
+                23: 11, 24: 12, 25: 23, 26: 24,
+                27: 25, 28: 26
+            }
+            return hierarchy.get(idx, -1)
 
     @staticmethod
     def process_hands(left_hand, right_hand):
