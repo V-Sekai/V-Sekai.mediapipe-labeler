@@ -318,6 +318,19 @@ class FullBodyProcessor:
                         [3, 5],
                         [4, 6],
                         [5, 7],
+                        # Facial connections
+                        [17, 18],  # brow_inner_left -> brow_inner_right
+                        [18, 0],  # brow_inner_right -> nose
+                        [19, 17],  # brow_outer_left -> brow_inner_left
+                        [20, 18],  # brow_outer_right -> brow_inner_right
+                        [21, 17],  # lid_upper_left -> brow_inner_left
+                        [22, 18],  # lid_upper_right -> brow_inner_right
+                        [23, 21],  # lid_lower_left -> lid_upper_left
+                        [24, 22],  # lid_lower_right -> lid_upper_right
+                        [25, 27],  # lip_upper -> lip_corner_left
+                        [26, 28],  # lip_lower -> lip_corner_right
+                        [27, 25],  # lip_corner_left -> lip_upper
+                        [28, 25],  # lip_corner_right -> lip_upper
                     ],
                 }
             ],
@@ -394,18 +407,19 @@ class FullBodyProcessor:
 
         # Adjusted facial map to avoid ID conflicts
         facial_map = {
-            151: 34,  # brow_inner_left
-            334: 35,  # brow_inner_right
-            46: 36,  # brow_outer_left
-            276: 37,  # brow_outer_right
-            159: 38,  # lid_upper_left
-            386: 39,  # lid_upper_right
-            145: 40,  # lid_lower_left
-            374: 41,  # lid_lower_right
-            13: 42,  # lip_upper
-            14: 43,  # lip_lower
-            61: 44,  # lip_corner_left
-            291: 45,  # lip_corner_right
+            # MediaPipe Face Index : FACS ID
+            151: 34,  # brow_inner_left (17)
+            334: 35,  # brow_inner_right (18)
+            46: 36,  # brow_outer_left (19)
+            276: 37,  # brow_outer_right (20)
+            159: 38,  # lid_upper_left (21)
+            386: 39,  # lid_upper_right (22)
+            145: 40,  # lid_lower_left (23)
+            374: 41,  # lid_lower_right (24)
+            13: 42,  # lip_upper (25)
+            14: 43,  # lip_lower (26)
+            61: 44,  # lip_corner_left (27)
+            291: 45,  # lip_corner_right (28)
         }
 
         if face:
@@ -486,8 +500,19 @@ class FullBodyProcessor:
             26: 24,  # Right knee -> right hip
             27: 25,  # Left ankle -> left knee
             28: 26,  # Right ankle -> right knee
-            # Facial connections (all to nose)
-            **{i: 0 for i in range(34, 46)},
+            # Facial connections
+            34: 35,  # brow_inner_left -> brow_inner_right
+            35: 0,  # brow_inner_right -> nose
+            36: 34,  # brow_outer_left -> brow_inner_left
+            37: 35,  # brow_outer_right -> brow_inner_right
+            38: 34,  # lid_upper_left -> brow_inner_left
+            39: 35,  # lid_upper_right -> brow_inner_right
+            40: 38,  # lid_lower_left -> lid_upper_left
+            41: 39,  # lid_lower_right -> lid_upper_right
+            42: 44,  # lip_upper -> lip_corner_left
+            43: 45,  # lip_lower -> lip_corner_right
+            44: 42,  # lip_corner_left -> lip_upper
+            45: 42,  # lip_corner_right -> lip_upper
         }.get(idx, -1)
 
 
