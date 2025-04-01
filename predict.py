@@ -11,24 +11,24 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 import cv2
 import json
 import numpy as np
 import os
+import sys
 import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 from mediapipe.framework.formats import landmark_pb2
+from mediapipe.tasks.python.components.containers import Category, Landmark
 from cog import BasePredictor, Input, Path, BaseModel
 from PIL import Image
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Tuple, Optional
 from datetime import datetime
 from collections import deque
 
 # Configuration
 COCO_KEYPOINT_NAMES = [
-    # 17 Standard COCO Body Keypoints
     "nose",
     "left_eye",
     "right_eye",
@@ -46,7 +46,6 @@ COCO_KEYPOINT_NAMES = [
     "right_knee",
     "left_ankle",
     "right_ankle",
-    # 11 Extended Facial Keypoints
     "brow_inner_left",
     "brow_inner_right",
     "brow_outer_left",
@@ -61,7 +60,6 @@ COCO_KEYPOINT_NAMES = [
     "lip_corner_right",
 ]
 COCO_SKELETON = [
-    # Standard COCO Body Connections
     [16, 14],
     [14, 12],
     [17, 15],
@@ -81,29 +79,28 @@ COCO_SKELETON = [
     [3, 5],
     [4, 6],
     [5, 7],
-    # Extended Facial Connections
     [0, 17],
-    [0, 18],  # Nose to inner brows
+    [0, 18],
     [17, 19],
-    [18, 20],  # Inner to outer brows
+    [18, 20],
     [17, 21],
-    [18, 22],  # Brows to upper lids
+    [18, 22],
     [21, 23],
-    [22, 24],  # Upper to lower lids
+    [22, 24],
     [0, 25],
-    [0, 26],  # Nose to lips
+    [0, 26],
     [25, 27],
-    [26, 28],  # Lip corners
+    [26, 28],
 ]
 FACS_AU_MAPPING = {
-    "AU1": ["browDownLeft", "browDownRight"],
+    "AU1": ["browInnerUp"],
     "AU2": ["browOuterUpLeft", "browOuterUpRight"],
-    "AU4": ["browInnerUp", "browInnerDown"],
+    "AU4": ["browDownLeft", "browDownRight"],
     "AU5": ["eyeBlinkLeft", "eyeBlinkRight"],
     "AU6": ["eyeSquintLeft", "eyeSquintRight"],
     "AU9": ["noseSneerLeft", "noseSneerRight"],
-    "AU12": ["mouthLeft", "mouthRight"],
-    "AU25": ["jawOpen", "mouthStretchLeft"],
+    "AU12": ["mouthSmileLeft", "mouthSmileRight"],
+    "AU25": ["jawOpen", "mouthStretch"],
 }
 
 
@@ -111,14 +108,20 @@ class Output(BaseModel):
     coco_keypoints: str
     facs: str
     fullbodyfacs: str
-    vrm_skeleton: str
     debug_image: Path
+    hand_landmarks: Optional[str]
 
 
 class FullBodyProcessor:
     @staticmethod
-    def process_results(pose_landmarks, face_landmarks, face_blendshapes, image_size):
-        """Process MediaPipe results into all output formats"""
+    def process_results(
+        pose_landmarks: Optional[landmark_pb2.NormalizedLandmarkList],
+        face_landmarks: Optional[landmark_pb2.NormalizedLandmarkList],
+        face_blendshapes: List[Any],
+        left_hand: Optional[List[Landmark]],
+        right_hand: Optional[List[Landmark]],
+        image_size: Tuple[int, int],
+    ) -> Dict[str, Any]:
         return {
             "coco": FullBodyProcessor._create_coco_output(
                 pose_landmarks, face_landmarks, image_size
@@ -127,7 +130,6 @@ class FullBodyProcessor:
             "fullbodyfacs": FullBodyProcessor._create_fullbodyfacs(
                 pose_landmarks, face_landmarks, image_size
             ),
-            "vrm": FullBodyProcessor._create_vrm_skeleton(pose_landmarks),
         }
 
     @staticmethod
@@ -136,20 +138,21 @@ class FullBodyProcessor:
         height, width = image_size
         keypoints = []
         num_visible = 0
-        # Process body keypoints (0-16)
+
+        body_landmarks = pose.landmark if pose else []
         for idx in range(17):
-            if idx < len(pose.landmark):
-                lmk = pose.landmark[idx]
+            if idx < len(body_landmarks):
+                lmk = body_landmarks[idx]
                 x, y, vis = lmk.x * width, lmk.y * height, lmk.visibility
                 keypoints += [x, y, 2 if vis > 0.5 else 1]
                 num_visible += 1 if vis > 0 else 0
             else:
                 keypoints += [0.0, 0.0, 0]
-        # Process facial keypoints (17-28)
+        face_landmarks_list = face if face else []
         facial_indices = [151, 334, 46, 276, 159, 386, 145, 374, 13, 14, 61, 291]
         for idx in facial_indices:
-            if face and idx < len(face):
-                lmk = face[idx]
+            if idx < len(face_landmarks_list):
+                lmk = face_landmarks_list[idx]
                 keypoints += [lmk.x * width, lmk.y * height, 2]
                 num_visible += 1
             else:
@@ -203,17 +206,24 @@ class FullBodyProcessor:
         }
 
     @staticmethod
-    def _create_facs_output(blendshapes):
+    def _create_facs_output(blendshapes: List[Any]) -> Dict[str, Any]:
         """Generate FACS-compliant AU intensities"""
         au_scores = {}
+        blendshape_dict = {}
+        for bs in blendshapes:
+            if hasattr(bs, "category_name") and hasattr(bs, "score"):
+                blendshape_dict[bs.category_name] = bs.score
+
         for au, components in FACS_AU_MAPPING.items():
-            scores = [bs.score for bs in blendshapes if bs.category_name in components]
+            scores = [blendshape_dict.get(name, 0.0) for name in components]
             au_scores[au] = sum(scores) / len(scores) if scores else 0.0
+
         return {
             "AUs": au_scores,
             "blendshapes": [
                 {"name": bs.category_name, "score": float(bs.score)}
                 for bs in blendshapes
+                if hasattr(bs, "category_name") and hasattr(bs, "score")
             ],
         }
 
@@ -222,10 +232,10 @@ class FullBodyProcessor:
         """Generate FullBodyFACS hierarchy"""
         keypoints = []
         height, width = image_size
-        # Body keypoints
+        body_landmarks = pose.landmark if pose else []
         for idx in range(33):
-            if idx < len(pose.landmark):
-                lmk = pose.landmark[idx]
+            if idx < len(body_landmarks):
+                lmk = body_landmarks[idx]
                 keypoints.append(
                     {
                         "id": idx,
@@ -234,7 +244,6 @@ class FullBodyProcessor:
                         "parent": FullBodyProcessor._get_parent(idx),
                     }
                 )
-        # Facial keypoints
         facial_map = {
             151: 17,
             334: 18,
@@ -249,140 +258,41 @@ class FullBodyProcessor:
             61: 27,
             291: 28,
         }
+        face_landmarks_list = face if face else []
         for mp_idx, facs_idx in facial_map.items():
-            if face and mp_idx < len(face):
-                lmk = face[mp_idx]
+            if mp_idx < len(face_landmarks_list):
+                lmk = face_landmarks_list[mp_idx]
                 keypoints.append(
                     {
                         "id": facs_idx,
                         "name": COCO_KEYPOINT_NAMES[facs_idx],
                         "position": [lmk.x * width, lmk.y * height, lmk.z * width],
-                        "parent": 0,  # All facial points parented to nose
+                        "parent": 0,
                     }
                 )
         return {"keypoints": keypoints}
 
     @staticmethod
-    def _get_parent(idx):
-        """Get parent joint index for body keypoints"""
+    def _get_parent(idx: int) -> int:
         hierarchy = {
-            0: -1,  # Nose
-            11: 5,  # Left shoulder
-            12: 6,  # Right shoulder
-            13: 11,  # Left elbow
-            14: 12,  # Right elbow
-            15: 13,  # Left wrist
-            16: 14,  # Right wrist
-            23: 11,  # Left hip
-            24: 12,  # Right hip
-            25: 23,  # Left knee
-            26: 24,  # Right knee
-            27: 25,  # Left ankle
-            28: 26,  # Right ankle
+            0: -1,
+            11: 5,
+            12: 6,
+            13: 11,
+            14: 12,
+            15: 13,
+            16: 14,
+            23: 11,
+            24: 12,
+            25: 23,
+            26: 24,
+            27: 25,
+            28: 26,
         }
         return hierarchy.get(idx, -1)
 
     @staticmethod
-    def _create_vrm_skeleton(pose_landmarks):
-        """Generate VRM 1.0 compliant skeleton structure"""
-        if not pose_landmarks:
-            return {"bones": [], "nodes": [], "specVersion": "1.0", "humanoid": True}
-        VRM_BONE_MAP = {
-            "hips": (23, 24),  # Average of left and right hips
-            "spine": (11, 12),  # Midpoint between shoulders
-            "chest": (11, 12),  # Same as spine for upper body
-            "upperChest": (11, 12),  # Shoulder midpoint
-            "neck": 0,  # Nose (approximation)
-            "head": 0,  # Nose
-            "leftUpperLeg": 23,
-            "leftLowerLeg": 25,
-            "leftFoot": 27,
-            "leftToes": 31,
-            "rightUpperLeg": 24,
-            "rightLowerLeg": 26,
-            "rightFoot": 28,
-            "rightToes": 32,
-            "leftShoulder": 11,
-            "leftUpperArm": 13,
-            "leftLowerArm": 15,
-            "leftHand": 17,
-            "rightShoulder": 12,
-            "rightUpperArm": 14,
-            "rightLowerArm": 16,
-            "rightHand": 18,
-        }
-        VRM_HIERARCHY = {
-            "hips": ["spine", "leftUpperLeg", "rightUpperLeg"],
-            "spine": ["chest"],
-            "chest": ["upperChest", "leftShoulder", "rightShoulder"],
-            "upperChest": ["neck"],
-            "neck": ["head"],
-            "leftUpperLeg": ["leftLowerLeg"],
-            "leftLowerLeg": ["leftFoot"],
-            "leftFoot": ["leftToes"],
-            "rightUpperLeg": ["rightLowerLeg"],
-            "rightLowerLeg": ["rightFoot"],
-            "rightFoot": ["rightToes"],
-            "leftShoulder": ["leftUpperArm"],
-            "leftUpperArm": ["leftLowerArm"],
-            "leftLowerArm": ["leftHand"],
-            "rightShoulder": ["rightUpperArm"],
-            "rightUpperArm": ["rightLowerArm"],
-            "rightLowerArm": ["rightHand"],
-        }
-
-        def get_position(bone_name):
-            indices = VRM_BONE_MAP.get(bone_name)
-            if not indices:
-                return None
-
-            if isinstance(indices, tuple):
-                points = []
-                for idx in indices:
-                    if idx < len(pose_landmarks.landmark):
-                        lmk = pose_landmarks.landmark[idx]
-                        points.append([lmk.x, lmk.y, lmk.z])
-                return np.mean(points, axis=0).tolist() if points else None
-            else:
-                if indices >= len(pose_landmarks.landmark):
-                    return None
-                lmk = pose_landmarks.landmark[indices]
-                return [lmk.x, lmk.y, lmk.z]
-
-        bones = []
-        nodes = []
-        visited = set()
-        queue = deque([("hips", None)])
-        while queue:
-            bone_name, parent = queue.popleft()
-            if bone_name in visited:
-                continue
-
-            position = get_position(bone_name)
-            if not position:
-                continue
-            # Create bone entry
-            bone = {"name": bone_name, "head": position, "tail": None, "parent": parent}
-
-            # Calculate tail from children
-            children = VRM_HIERARCHY.get(bone_name, [])
-            child_positions = []
-            for child in children:
-                child_pos = get_position(child)
-                if child_pos:
-                    child_positions.append(child_pos)
-                    queue.append((child, bone_name))
-
-            if child_positions:
-                bone["tail"] = np.mean(child_positions, axis=0).tolist()
-
-            bones.append(bone)
-            nodes.append({"name": bone_name, "translation": bone["head"]})
-            visited.add(bone_name)
-        return {"bones": bones, "nodes": nodes, "specVersion": "1.0", "humanoid": True}
-
-    @staticmethod
-    def _calculate_bbox(keypoints):
+    def _calculate_bbox(keypoints: List[float]) -> List[float]:
         valid = [
             (keypoints[i], keypoints[i + 1])
             for i in range(0, len(keypoints), 3)
@@ -401,7 +311,7 @@ class FullBodyProcessor:
 
 
 class Predictor(BasePredictor):
-    def setup(self):
+    def setup(self) -> None:
         """Initialize MediaPipe models"""
         self.face_processor = vision.FaceLandmarker.create_from_options(
             vision.FaceLandmarkerOptions(
@@ -410,48 +320,94 @@ class Predictor(BasePredictor):
                 ),
                 output_face_blendshapes=True,
                 num_faces=1,
+                min_face_detection_confidence=0.5,
+                min_face_presence_confidence=0.5,
+                min_tracking_confidence=0.5
             )
         )
         self.pose_processor = mp.solutions.pose.Pose(
-            static_image_mode=True, model_complexity=2, min_detection_confidence=0.5
+            static_image_mode=True,
+            model_complexity=2,
+            min_detection_confidence=0.5,
+            smooth_landmarks=True
+        )
+        self.hand_processor = vision.HandLandmarker.create_from_options(
+            vision.HandLandmarkerOptions(
+                base_options=python.BaseOptions(
+                    model_asset_path="thirdparty/hand_landmarker.task"
+                ),
+                num_hands=2,
+                min_hand_detection_confidence=0.5,
+                min_hand_presence_confidence=0.5,
+                min_tracking_confidence=0.5
+            )
         )
 
-    def predict(self, image_path: Path) -> Output:
+    def predict(self, image_path: Path = Input(description="Input image")) -> Output:
+        """Process an image and return all outputs"""
         img = Image.open(image_path).convert("RGB")
         img_np = np.array(img)
         height, width, _ = img_np.shape
-
-        # Convert to MediaPipe Image with explicit format
+        # Convert to MediaPipe Image
         mp_image = mp.Image(
             image_format=mp.ImageFormat.SRGB, data=img_np.astype(np.uint8)
         )
-
         # Detect features
         face_result = self.face_processor.detect(mp_image)
-        pose_result = self.pose_processor.process(
-            cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
-        )
-        # Generate outputs
+        pose_result = self.pose_processor.process(img_np)
+        hand_result = self.hand_processor.detect(mp_image)
+        # Process hands
+        left_hand, right_hand = None, None
+        if hand_result.hand_landmarks:
+            for idx, handedness in enumerate(hand_result.handedness):
+                if handedness[0].display_name == "Left":
+                    left_hand = hand_result.hand_landmarks[idx]
+                else:
+                    right_hand = hand_result.hand_landmarks[idx]
+        # Process results
         results = FullBodyProcessor.process_results(
-            pose_result.pose_landmarks,
-            face_result.face_landmarks[0] if face_result.face_landmarks else None,
-            face_result.face_blendshapes[0] if face_result.face_blendshapes else [],
-            (height, width),
+            pose_landmarks=pose_result.pose_landmarks,
+            face_landmarks=face_result.face_landmarks[0]
+            if face_result.face_landmarks
+            else None,
+            face_blendshapes=face_result.face_blendshapes[0]
+            if face_result.face_blendshapes
+            else [],
+            left_hand=left_hand,
+            right_hand=right_hand,
+            image_size=(height, width),
         )
         return Output(
             coco_keypoints=json.dumps(results["coco"], indent=2),
             facs=json.dumps(results["facs"], indent=2),
             fullbodyfacs=json.dumps(results["fullbodyfacs"], indent=2),
-            vrm_skeleton=json.dumps(results["vrm"], indent=2),
             debug_image=self._create_debug_image(
-                img_np, face_result, pose_result, image_path
+                img_np, face_result, pose_result, hand_result, image_path
             ),
+            hand_landmarks=json.dumps(
+                {
+                    "left": [{"x": lmk.x, "y": lmk.y} for lmk in left_hand]
+                    if left_hand
+                    else [],
+                    "right": [{"x": lmk.x, "y": lmk.y} for lmk in right_hand]
+                    if right_hand
+                    else [],
+                }
+            )
+            if left_hand or right_hand
+            else None,
         )
 
-    def _create_debug_image(self, img_np, face_result, pose_result, image_path):
+    def _create_debug_image(
+        self,
+        img_np: np.ndarray,
+        face_result: vision.FaceLandmarkerResult,
+        pose_result: mp.tasks.vision.PoseLandmarkerResult,
+        hand_result: vision.HandLandmarkerResult,
+        image_path: Path,
+    ) -> Path:
         """Generate annotated debug image"""
         annotated = img_np.copy()
-
         # Draw face landmarks
         if face_result.face_landmarks:
             landmarks = landmark_pb2.NormalizedLandmarkList()
@@ -471,6 +427,19 @@ class Predictor(BasePredictor):
                 pose_result.pose_landmarks,
                 mp.solutions.pose.POSE_CONNECTIONS,
             )
+        # Draw hand landmarks
+        if hand_result.hand_landmarks:
+            for hand_landmarks in hand_result.hand_landmarks:
+                hand_landmarks_proto = landmark_pb2.NormalizedLandmarkList()
+                hand_landmarks_proto.landmark.extend(
+                    [
+                        landmark_pb2.NormalizedLandmark(x=lmk.x, y=lmk.y, z=lmk.z)
+                        for lmk in hand_landmarks
+                    ]
+                )
+                mp.solutions.drawing_utils.draw_landmarks(
+                    annotated, hand_landmarks_proto, mp.solutions.hands.HAND_CONNECTIONS
+                )
         debug_path = f"/tmp/{os.path.basename(image_path)}_debug.jpg"
         Image.fromarray(annotated).save(debug_path)
         return Path(debug_path)
