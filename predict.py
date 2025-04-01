@@ -17,6 +17,7 @@ import json
 import numpy as np
 import os
 import sys
+import urllib.request
 import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
@@ -24,7 +25,7 @@ from mediapipe.framework.formats import landmark_pb2
 from mediapipe.tasks.python.components.containers import Category, Landmark
 from cog import BasePredictor, Input, Path, BaseModel
 from PIL import Image
-from typing import Any, Dict, List, Tuple, Optional
+from typing import Any, Dict, List, Tuple, Optional, Union
 from datetime import datetime
 
 # Configuration
@@ -103,79 +104,181 @@ class Output(BaseModel):
     fullbodyfacs: str
     debug_image: Path
     hand_landmarks: Optional[str]
+    num_people: int
+
+
+class PersonProcessor:
+    @staticmethod
+    def detect_people(
+        image_np: np.ndarray, max_people: int
+    ) -> List[Tuple[int, int, int, int]]:
+        base_options = python.BaseOptions(
+            model_asset_path="thirdparty/ssd_mobilenet_v2.tflite"
+        )
+        options = vision.ObjectDetectorOptions(
+            base_options=base_options,
+            score_threshold=0.4,
+            category_allowlist=["person"],
+            max_results=max_people,
+        )
+        detector = vision.ObjectDetector.create_from_options(options)
+
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=image_np)
+        detection_result = detector.detect(mp_image)
+
+        boxes = []
+        h, w = image_np.shape[:2]
+
+        for detection in detection_result.detections:
+            bbox = detection.bounding_box
+            startX = int(bbox.origin_x)
+            startY = int(bbox.origin_y)
+            endX = int(bbox.origin_x + bbox.width)
+            endY = int(bbox.origin_y + bbox.height)
+
+            # Expand box by 20%
+            width = endX - startX
+            height = endY - startY
+            startX = max(0, startX - int(0.2 * width))
+            startY = max(0, startY - int(0.2 * height))
+            endX = min(w, endX + int(0.2 * width))
+            endY = min(h, endY + int(0.2 * height))
+
+            boxes.append((startX, startY, endX, endY))
+
+        return boxes
+
+    @staticmethod
+    def process_crop(
+        crop: np.ndarray,
+        box: Tuple[int, int, int, int],
+        original_size: Tuple[int, int],
+        predictor: Any,
+    ):
+        (startX, startY, endX, endY) = box
+        orig_h, orig_w = original_size
+
+        # Maintain aspect ratio
+        h, w = crop.shape[:2]
+        scale = 640 / max(w, h)
+        new_w, new_h = int(w * scale), int(h * scale)
+        resized = cv2.resize(crop, (new_w, new_h))
+
+        # Convert to RGB and process
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=resized)
+
+        try:
+            face_result = predictor.face_processor.detect(mp_image)
+            pose_result = predictor.pose_processor.process(resized)
+            hand_result = predictor.hand_processor.detect(mp_image)
+        except Exception as e:
+            print(f"Processing error: {e}")
+            return None
+
+        # Coordinate mapping functions
+        def map_x(x):
+            return (x / new_w) * (endX - startX) + startX
+
+        def map_y(y):
+            return (y / new_h) * (endY - startY) + startY
+
+        def map_z(z):
+            return z * scale
+
+        # Process pose landmarks
+        mapped_pose = None
+        if pose_result.pose_landmarks:
+            mapped_pose = landmark_pb2.NormalizedLandmarkList()
+            for lmk in pose_result.pose_landmarks.landmark:
+                mapped_pose.landmark.append(
+                    landmark_pb2.NormalizedLandmark(
+                        x=map_x(lmk.x * new_w) / orig_w,
+                        y=map_y(lmk.y * new_h) / orig_h,
+                        z=map_z(lmk.z),
+                        visibility=lmk.visibility,
+                    )
+                )
+
+        # Process face landmarks
+        mapped_face = None
+        if face_result.face_landmarks:
+            mapped_face = []
+            for lmk in face_result.face_landmarks[0]:
+                mapped_face.append(
+                    Landmark(
+                        x=map_x(lmk.x * new_w) / orig_w,
+                        y=map_y(lmk.y * new_h) / orig_h,
+                        z=map_z(lmk.z),
+                    )
+                )
+
+        # Process hands
+        left_hand, right_hand = None, None
+        if hand_result.hand_landmarks:
+            for idx, handedness in enumerate(hand_result.handedness):
+                hand = []
+                for lmk in hand_result.hand_landmarks[idx]:
+                    hand.append(
+                        Landmark(
+                            x=map_x(lmk.x * new_w) / orig_w,
+                            y=map_y(lmk.y * new_h) / orig_h,
+                            z=map_z(lmk.z),
+                        )
+                    )
+                if handedness[0].display_name == "Left":
+                    left_hand = hand
+                else:
+                    right_hand = hand
+
+        return FullBodyProcessor.process_results(
+            mapped_pose,
+            mapped_face,
+            face_result.face_blendshapes[0] if face_result.face_blendshapes else [],
+            left_hand,
+            right_hand,
+            original_size,
+        )
 
 
 class FullBodyProcessor:
     @staticmethod
-    def process_results(
-        pose_landmarks,
-        face_landmarks,
-        face_blendshapes,
-        left_hand,
-        right_hand,
-        image_size,
-    ):
+    def process_results(pose, face, blendshapes, left_hand, right_hand, image_size):
         return {
-            "coco": FullBodyProcessor._create_coco_output(
-                pose_landmarks, face_landmarks, image_size
+            "coco": FullBodyProcessor.create_coco_output(pose, face, image_size),
+            "facs": FullBodyProcessor.create_facs_output(blendshapes),
+            "fullbodyfacs": FullBodyProcessor.create_fullbodyfacs(
+                pose, face, image_size
             ),
-            "facs": FullBodyProcessor._create_facs_output(face_blendshapes),
-            "fullbodyfacs": FullBodyProcessor._create_fullbodyfacs(
-                pose_landmarks, face_landmarks, image_size
-            ),
+            "hands": FullBodyProcessor.process_hands(left_hand, right_hand),
         }
 
     @staticmethod
-    def _create_coco_output(pose, face, image_size):
+    def create_coco_output(pose, face, image_size):
         height, width = image_size
         keypoints = []
         num_visible = 0
 
-        body_landmarks = pose.landmark if pose else []
-        for idx in range(17):
-            if idx < len(body_landmarks):
-                lmk = body_landmarks[idx]
-                x, y, vis = lmk.x * width, lmk.y * height, lmk.visibility
-                keypoints += [x, y, 2 if vis > 0.5 else 1]
-                num_visible += 1 if vis > 0 else 0
-            else:
-                keypoints += [0.0, 0.0, 0]
+        if pose:
+            for idx in range(17):
+                if idx < len(pose.landmark):
+                    lmk = pose.landmark[idx]
+                    x, y, vis = lmk.x * width, lmk.y * height, lmk.visibility
+                    keypoints += [x, y, 2 if vis > 0.5 else 1]
+                    num_visible += 1 if vis > 0 else 0
+                else:
+                    keypoints += [0.0, 0.0, 0]
 
-        face_landmarks_list = face if face else []
         facial_indices = [151, 334, 46, 276, 159, 386, 145, 374, 13, 14, 61, 291]
-        for idx in facial_indices:
-            if idx < len(face_landmarks_list):
-                lmk = face_landmarks_list[idx]
-                keypoints += [lmk.x * width, lmk.y * height, 2]
-                num_visible += 1
-            else:
-                keypoints += [0.0, 0.0, 0]
+        if face:
+            for idx in facial_indices:
+                if idx < len(face):
+                    lmk = face[idx]
+                    keypoints += [lmk.x * width, lmk.y * height, 2]
+                    num_visible += 1
+                else:
+                    keypoints += [0.0, 0.0, 0]
 
         return {
-            "info": {
-                "description": "COCO 1.1 Extended with Facial Keypoints",
-                "version": "1.1",
-                "year": 2023,
-                "contributor": "MediaPipe FACS Extension",
-                "date_created": datetime.now().isoformat(),
-            },
-            "licenses": [
-                {
-                    "id": 1,
-                    "name": "CC-BY-4.0",
-                    "url": "https://creativecommons.org/licenses/by/4.0/",
-                }
-            ],
-            "images": [
-                {
-                    "id": 0,
-                    "width": width,
-                    "height": height,
-                    "file_name": "input.jpg",
-                    "license": 1,
-                    "date_captured": datetime.now().isoformat(),
-                }
-            ],
             "annotations": [
                 {
                     "id": 0,
@@ -184,7 +287,7 @@ class FullBodyProcessor:
                     "iscrowd": 0,
                     "keypoints": keypoints,
                     "num_keypoints": num_visible,
-                    "bbox": FullBodyProcessor._calculate_bbox(keypoints),
+                    "bbox": FullBodyProcessor.calculate_bbox(keypoints),
                     "area": width * height,
                 }
             ],
@@ -214,25 +317,13 @@ class FullBodyProcessor:
                         [3, 5],
                         [4, 6],
                         [5, 7],
-                        [0, 17],
-                        [0, 18],
-                        [17, 19],
-                        [18, 20],
-                        [17, 21],
-                        [18, 22],
-                        [21, 23],
-                        [22, 24],
-                        [0, 25],
-                        [0, 26],
-                        [25, 27],
-                        [26, 28],
                     ],
                 }
             ],
         }
 
     @staticmethod
-    def _create_facs_output(blendshapes):
+    def create_facs_output(blendshapes):
         au_scores = {}
         blendshape_dict = {}
         for bs in blendshapes:
@@ -264,7 +355,7 @@ class FullBodyProcessor:
         }
 
     @staticmethod
-    def _create_fullbodyfacs(pose, face, image_size):
+    def create_fullbodyfacs(pose, face, image_size):
         keypoints = []
         height, width = image_size
 
@@ -275,7 +366,7 @@ class FullBodyProcessor:
                         "id": idx,
                         "name": f"body_{idx}",
                         "position": [lmk.x * width, lmk.y * height, lmk.z * width],
-                        "parent": FullBodyProcessor._get_parent(idx),
+                        "parent": FullBodyProcessor.get_parent(idx),
                     }
                 )
 
@@ -310,7 +401,31 @@ class FullBodyProcessor:
         return {"keypoints": keypoints}
 
     @staticmethod
-    def _get_parent(idx):
+    def process_hands(left_hand, right_hand):
+        def process_single_hand(hand, is_left=True):
+            if not hand:
+                return []
+            return [
+                {
+                    "index": idx,
+                    "x": lmk.x,
+                    "y": lmk.y,
+                    "name": ("left_wrist" if is_left else "right_wrist")
+                    if idx == 0
+                    else (
+                        LEFT_HAND_VRM_MAPPING if is_left else RIGHT_HAND_VRM_MAPPING
+                    ).get(idx, None),
+                }
+                for idx, lmk in enumerate(hand)
+            ]
+
+        return {
+            "left": process_single_hand(left_hand, True),
+            "right": process_single_hand(right_hand, False),
+        }
+
+    @staticmethod
+    def get_parent(idx):
         hierarchy = {
             0: -1,
             11: 5,
@@ -329,7 +444,7 @@ class FullBodyProcessor:
         return hierarchy.get(idx, -1)
 
     @staticmethod
-    def _calculate_bbox(keypoints):
+    def calculate_bbox(keypoints):
         valid = [
             (keypoints[i], keypoints[i + 1])
             for i in range(0, len(keypoints), 3)
@@ -349,11 +464,40 @@ class FullBodyProcessor:
 
 class Predictor(BasePredictor):
     def setup(self):
+        # Create model directory and download required models
+        os.makedirs("thirdparty", exist_ok=True)
+
+        # Download COCO detector
+        ssd_model_path = "thirdparty/ssd_mobilenet_v2.tflite"
+        if not os.path.exists(ssd_model_path):
+            print("Downloading COCO object detector...")
+            urllib.request.urlretrieve(
+                "https://storage.googleapis.com/mediapipe-models/object_detector/ssd_mobilenet_v2/float32/1/ssd_mobilenet_v2.tflite",
+                ssd_model_path,
+            )
+
+        # Download face landmark model
+        face_model_path = "thirdparty/face_landmarker.task"
+        if not os.path.exists(face_model_path):
+            print("Downloading face landmark model...")
+            urllib.request.urlretrieve(
+                "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+                face_model_path,
+            )
+
+        # Download hand landmark model
+        hand_model_path = "thirdparty/hand_landmarker.task"
+        if not os.path.exists(hand_model_path):
+            print("Downloading hand landmark model...")
+            urllib.request.urlretrieve(
+                "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
+                hand_model_path,
+            )
+
+        # Initialize face processor
         self.face_processor = vision.FaceLandmarker.create_from_options(
             vision.FaceLandmarkerOptions(
-                base_options=python.BaseOptions(
-                    model_asset_path="thirdparty/face_landmarker_v2_with_blendshapes.task"
-                ),
+                base_options=python.BaseOptions(model_asset_path=face_model_path),
                 output_face_blendshapes=True,
                 num_faces=1,
                 min_face_detection_confidence=0.5,
@@ -362,6 +506,7 @@ class Predictor(BasePredictor):
             )
         )
 
+        # Initialize pose processor
         self.pose_processor = mp.solutions.pose.Pose(
             static_image_mode=True,
             model_complexity=2,
@@ -369,11 +514,10 @@ class Predictor(BasePredictor):
             smooth_landmarks=True,
         )
 
+        # Initialize hand processor
         self.hand_processor = vision.HandLandmarker.create_from_options(
             vision.HandLandmarkerOptions(
-                base_options=python.BaseOptions(
-                    model_asset_path="thirdparty/hand_landmarker.task"
-                ),
+                base_options=python.BaseOptions(model_asset_path=hand_model_path),
                 num_hands=2,
                 min_hand_detection_confidence=0.5,
                 min_hand_presence_confidence=0.5,
@@ -381,113 +525,84 @@ class Predictor(BasePredictor):
             )
         )
 
-    def predict(self, image_path: Path = Input(description="Input image")) -> Output:
+    def predict(
+        self,
+        image_path: Path = Input(description="Input image"),
+        max_people: int = Input(
+            description="Maximum number of people to detect (1-100)",
+            ge=1,
+            le=100,
+            default=10,
+        ),
+    ) -> Output:
         img = Image.open(image_path).convert("RGB")
         img_np = np.array(img)
-        height, width, _ = img_np.shape
+        original_h, original_w = img_np.shape[:2]
 
-        mp_image = mp.Image(
-            image_format=mp.ImageFormat.SRGB, data=img_np.astype(np.uint8)
-        )
+        # Detect people with configurable maximum
+        boxes = PersonProcessor.detect_people(img_np, max_people)
+        all_results = []
 
-        face_result = self.face_processor.detect(mp_image)
-        pose_result = self.pose_processor.process(img_np)
-        hand_result = self.hand_processor.detect(mp_image)
+        for box in boxes:
+            startX, startY, endX, endY = box
+            crop = img_np[startY:endY, startX:endX]
 
-        left_hand, right_hand = None, None
-        if hand_result.hand_landmarks:
-            for idx, handedness in enumerate(hand_result.handedness):
-                if handedness[0].display_name == "Left":
-                    left_hand = hand_result.hand_landmarks[idx]
-                else:
-                    right_hand = hand_result.hand_landmarks[idx]
+            if crop.size == 0:
+                continue
 
-        results = FullBodyProcessor.process_results(
-            pose_result.pose_landmarks,
-            face_result.face_landmarks[0] if face_result.face_landmarks else None,
-            face_result.face_blendshapes[0] if face_result.face_blendshapes else [],
-            left_hand,
-            right_hand,
-            (height, width),
-        )
+            person_result = PersonProcessor.process_crop(
+                crop, box, (original_h, original_w), self
+            )
+
+            if person_result:
+                all_results.append(person_result)
+
+        # Aggregate results
+        coco_output = self.aggregate_coco(all_results, original_w, original_h)
+        facs_output = [r["facs"] for r in all_results]
+        fullbody_output = [r["fullbodyfacs"] for r in all_results]
+        hand_output = [r["hands"] for r in all_results]
 
         return Output(
-            coco_keypoints=json.dumps(results["coco"], indent=2),
-            facs=json.dumps(results["facs"], indent=2),
-            fullbodyfacs=json.dumps(results["fullbodyfacs"], indent=2),
-            debug_image=self._create_debug_image(
-                img_np, face_result, pose_result, hand_result, image_path
-            ),
-            hand_landmarks=self._process_hands(left_hand, right_hand),
+            coco_keypoints=json.dumps(coco_output, indent=2),
+            facs=json.dumps({"people": facs_output}, indent=2),
+            fullbodyfacs=json.dumps({"people": fullbody_output}, indent=2),
+            debug_image=self.create_debug_image(img_np, boxes),
+            hand_landmarks=json.dumps(hand_output) if any(hand_output) else None,
+            num_people=len(all_results),
         )
 
-    def _process_hands(self, left_hand, right_hand):
-        def process_single_hand(hand, is_left=True):
-            if not hand:
-                return []
-            return [
+    def aggregate_coco(self, results, width, height):
+        return {
+            "info": {
+                "description": "Multi-person COCO 1.1 Extended",
+                "version": "1.1",
+                "year": 2023,
+                "contributor": "MediaPipe Crowd Processor",
+                "date_created": datetime.now().isoformat(),
+            },
+            "licenses": [{"id": 1, "name": "CC-BY-4.0"}],
+            "images": [
                 {
-                    "index": idx,
-                    "x": lmk.x,
-                    "y": lmk.y,
-                    "name": ("left_wrist" if is_left else "right_wrist")
-                    if idx == 0
-                    else (
-                        LEFT_HAND_VRM_MAPPING if is_left else RIGHT_HAND_VRM_MAPPING
-                    ).get(idx, None),
+                    "id": 0,
+                    "width": width,
+                    "height": height,
+                    "file_name": "input.jpg",
+                    "license": 1,
+                    "date_captured": datetime.now().isoformat(),
                 }
-                for idx, lmk in enumerate(hand)
-            ]
+            ],
+            "annotations": [res["coco"]["annotations"][0] for res in results],
+            "categories": FullBodyProcessor.create_coco_output(None, None, (0, 0))[
+                "categories"
+            ],
+        }
 
-        return (
-            json.dumps(
-                {
-                    "left": process_single_hand(left_hand, True),
-                    "right": process_single_hand(right_hand, False),
-                }
-            )
-            if left_hand or right_hand
-            else None
-        )
-
-    def _create_debug_image(
-        self, img_np, face_result, pose_result, hand_result, image_path
-    ):
+    def create_debug_image(self, img_np, boxes):
         annotated = img_np.copy()
-
-        if face_result.face_landmarks:
-            landmarks = landmark_pb2.NormalizedLandmarkList()
-            landmarks.landmark.extend(
-                [
-                    landmark_pb2.NormalizedLandmark(x=lmk.x, y=lmk.y, z=lmk.z)
-                    for lmk in face_result.face_landmarks[0]
-                ]
-            )
-            mp.solutions.drawing_utils.draw_landmarks(
-                annotated, landmarks, mp.solutions.face_mesh.FACEMESH_CONTOURS
-            )
-
-        if pose_result.pose_landmarks:
-            mp.solutions.drawing_utils.draw_landmarks(
-                annotated,
-                pose_result.pose_landmarks,
-                mp.solutions.pose.POSE_CONNECTIONS,
-            )
-
-        if hand_result.hand_landmarks:
-            for hand_landmarks in hand_result.hand_landmarks:
-                hand_landmarks_proto = landmark_pb2.NormalizedLandmarkList()
-                hand_landmarks_proto.landmark.extend(
-                    [
-                        landmark_pb2.NormalizedLandmark(x=lmk.x, y=lmk.y, z=lmk.z)
-                        for lmk in hand_landmarks
-                    ]
-                )
-                mp.solutions.drawing_utils.draw_landmarks(
-                    annotated, hand_landmarks_proto, mp.solutions.hands.HAND_CONNECTIONS
-                )
-
-        debug_path = f"/tmp/{os.path.basename(image_path)}_debug.jpg"
+        for startX, startY, endX, endY in boxes:
+            cv2.rectangle(annotated, (startX, startY), (endX, endY), (0, 255, 0), 2)
+        debug_path = "/tmp/debug_output.jpg"
         Image.fromarray(annotated).save(debug_path)
         return Path(debug_path)
 
