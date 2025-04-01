@@ -186,21 +186,26 @@ class PersonProcessor:
         def map_z(z):
             return z * scale
 
-        # Process pose landmarks
+        # Process pose landmarks with visibility filtering
         mapped_pose = None
         if pose_result.pose_landmarks:
             mapped_pose = landmark_pb2.NormalizedLandmarkList()
             for lmk in pose_result.pose_landmarks.landmark:
-                mapped_pose.landmark.append(
-                    landmark_pb2.NormalizedLandmark(
-                        x=map_x(lmk.x * new_w) / orig_w,
-                        y=map_y(lmk.y * new_h) / orig_h,
-                        z=map_z(lmk.z),
-                        visibility=lmk.visibility,
+                if lmk.visibility < 0.1:  # Filter low-visibility keypoints
+                    mapped_pose.landmark.append(
+                        landmark_pb2.NormalizedLandmark(x=0, y=0, z=0, visibility=0)
                     )
-                )
+                else:
+                    mapped_pose.landmark.append(
+                        landmark_pb2.NormalizedLandmark(
+                            x=map_x(lmk.x * new_w) / orig_w,
+                            y=map_y(lmk.y * new_h) / orig_h,
+                            z=map_z(lmk.z),
+                            visibility=lmk.visibility,
+                        )
+                    )
 
-        # Process face landmarks
+        # Process face landmarks with improved alignment
         mapped_face = None
         if face_result.face_landmarks:
             mapped_face = []
@@ -263,13 +268,34 @@ class FullBodyProcessor:
             for idx in range(17):
                 if idx < len(pose.landmark):
                     lmk = pose.landmark[idx]
-                    x, y, vis = lmk.x * width, lmk.y * height, lmk.visibility
-                    keypoints += [x, y, 2 if vis > 0.5 else 1]
-                    num_visible += 1 if vis > 0 else 0
+                    vis = lmk.visibility
+                    if vis < 0.1:  # Filter low-confidence keypoints
+                        keypoints += [0.0, 0.0, 0]
+                    else:
+                        x = lmk.x * width
+                        y = lmk.y * height
+                        vis_flag = 2 if vis > 0.5 else 1
+                        keypoints += [x, y, vis_flag]
+                        num_visible += 1 if vis_flag == 2 else 0
                 else:
                     keypoints += [0.0, 0.0, 0]
 
-        facial_indices = [151, 334, 46, 276, 159, 386, 145, 374, 13, 14, 61, 291]
+        # Updated facial indices based on MediaPipe's face landmark model
+        facial_indices = [
+            105,  # brow_inner_left
+            334,  # brow_inner_right
+            46,  # brow_outer_left
+            276,  # brow_outer_right
+            159,  # lid_upper_left
+            386,  # lid_upper_right
+            145,  # lid_lower_left
+            374,  # lid_lower_right
+            13,  # lip_upper
+            14,  # lip_lower
+            61,  # lip_corner_left
+            291,  # lip_corner_right
+        ]
+
         if face:
             for idx in facial_indices:
                 if idx < len(face):
@@ -279,12 +305,19 @@ class FullBodyProcessor:
                 else:
                     keypoints += [0.0, 0.0, 0]
 
-        # Adjust the nose position to be closer to the spine
-        if pose and len(pose.landmark) > 0:
-            nose_x = pose.landmark[0].x * width
-            neck_x = (pose.landmark[11].x + pose.landmark[12].x) / 2 * width
-            keypoints[0] = (nose_x + neck_x) / 2
-            keypoints[1] = pose.landmark[0].y * height
+        # Improved neck position calculation
+        if pose and len(pose.landmark) > 12:
+            nose_lmk = pose.landmark[0]
+            left_shoulder = pose.landmark[11]
+            right_shoulder = pose.landmark[12]
+
+            # Only adjust if both shoulders are visible
+            if left_shoulder.visibility >= 0.5 and right_shoulder.visibility >= 0.5:
+                neck_x = (left_shoulder.x + right_shoulder.x) / 2 * width
+                keypoints[0] = (nose_lmk.x * width + neck_x) / 2
+            else:
+                keypoints[0] = nose_lmk.x * width
+            keypoints[1] = nose_lmk.y * height
 
         return {
             "annotations": [
@@ -325,19 +358,18 @@ class FullBodyProcessor:
                         [3, 5],
                         [4, 6],
                         [5, 7],
-                        # Facial connections
-                        [17, 18],  # brow_inner_left -> brow_inner_right
-                        [18, 0],  # brow_inner_right -> nose
-                        [19, 17],  # brow_outer_left -> brow_inner_left
-                        [20, 18],  # brow_outer_right -> brow_inner_right
-                        [21, 17],  # lid_upper_left -> brow_inner_left
-                        [22, 18],  # lid_upper_right -> brow_inner_right
-                        [23, 21],  # lid_lower_left -> lid_upper_left
-                        [24, 22],  # lid_lower_right -> lid_upper_right
-                        [25, 27],  # lip_upper -> lip_corner_left
-                        [26, 28],  # lip_lower -> lip_corner_right
-                        [27, 25],  # lip_corner_left -> lip_upper
-                        [28, 25],  # lip_corner_right -> lip_upper
+                        [17, 18],
+                        [18, 0],
+                        [19, 17],
+                        [20, 18],
+                        [21, 17],
+                        [22, 18],
+                        [23, 21],
+                        [24, 22],
+                        [25, 27],
+                        [26, 28],
+                        [27, 25],
+                        [28, 25],
                     ],
                 }
             ],
@@ -389,7 +421,7 @@ class FullBodyProcessor:
                         "name": f"body_{idx}",
                         "position": [lmk.x * width, lmk.y * height, lmk.z * width],
                         "parent": FullBodyProcessor.get_parent(idx),
-                        "visibility": lmk.visibility,  # Added visibility
+                        "visibility": lmk.visibility,
                     }
                 )
 
@@ -398,35 +430,37 @@ class FullBodyProcessor:
                 elif idx == 12:
                     right_shoulder = lmk
 
+            # Improved neck calculation with visibility check
             if left_shoulder and right_shoulder:
-                neck_x = (left_shoulder.x + right_shoulder.x) / 2 * width
-                neck_y = (left_shoulder.y + right_shoulder.y) / 2 * height
-                neck_z = (left_shoulder.z + right_shoulder.z) / 2 * width
-                keypoints.append(
-                    {
-                        "id": 33,
-                        "name": "neck",
-                        "position": [neck_x, neck_y, neck_z],
-                        "parent": 0,
-                        "visibility": min(
-                            left_shoulder.visibility, right_shoulder.visibility
-                        ),  # Use min visibility
-                    }
-                )
+                if left_shoulder.visibility >= 0.5 and right_shoulder.visibility >= 0.5:
+                    neck_x = (left_shoulder.x + right_shoulder.x) / 2 * width
+                    neck_y = (left_shoulder.y + right_shoulder.y) / 2 * height
+                    neck_z = (left_shoulder.z + right_shoulder.z) / 2 * width
+                    keypoints.append(
+                        {
+                            "id": 33,
+                            "name": "neck",
+                            "position": [neck_x, neck_y, neck_z],
+                            "parent": 0,
+                            "visibility": min(
+                                left_shoulder.visibility, right_shoulder.visibility
+                            ),
+                        }
+                    )
 
         facial_map = {
-            151: 34,
-            46: 36,
-            159: 38,
-            13: 42,
-            334: 35,
-            276: 37,
-            386: 39,
-            14: 43,
-            145: 40,
-            374: 41,
-            61: 44,
-            291: 45,
+            105: 34,  # brow_inner_left
+            334: 35,  # brow_inner_right
+            46: 36,  # brow_outer_left
+            276: 37,  # brow_outer_right
+            159: 38,  # lid_upper_left
+            386: 39,  # lid_upper_right
+            145: 40,  # lid_lower_left
+            374: 41,  # lid_lower_right
+            13: 42,  # lip_upper
+            14: 43,  # lip_lower
+            61: 44,  # lip_corner_left
+            291: 45,  # lip_corner_right
         }
 
         if face:
@@ -439,7 +473,7 @@ class FullBodyProcessor:
                             "name": COCO_KEYPOINT_NAMES[facs_id - 17],
                             "position": [lmk.x * width, lmk.y * height, lmk.z * width],
                             "parent": 0,
-                            "visibility": 1.0,  # Assume facial points are visible
+                            "visibility": 1.0,
                         }
                     )
 
@@ -447,7 +481,6 @@ class FullBodyProcessor:
 
     @staticmethod
     def calculate_bbox(keypoints):
-        """Calculate bounding box from keypoints with visibility > 0"""
         valid = [
             (keypoints[i], keypoints[i + 1])
             for i in range(0, len(keypoints), 3)
@@ -466,8 +499,6 @@ class FullBodyProcessor:
 
     @staticmethod
     def process_hands(left_hand, right_hand):
-        """Process hand landmarks into standardized format"""
-
         def process_single_hand(hand, is_left=True):
             if not hand:
                 return []
@@ -493,34 +524,31 @@ class FullBodyProcessor:
     @staticmethod
     def get_parent(idx):
         return {
-            # Body connections
-            11: 33,  # Left shoulder -> neck
-            12: 33,  # Right shoulder -> neck
-            33: 0,  # Neck -> nose
-            # Original MediaPipe connections
-            13: 11,  # Left elbow -> left shoulder
-            14: 12,  # Right elbow -> right shoulder
-            15: 13,  # Left wrist -> left elbow
-            16: 14,  # Right wrist -> right elbow
-            23: 11,  # Left hip -> left shoulder
-            24: 12,  # Right hip -> right shoulder
-            25: 23,  # Left knee -> left hip
-            26: 24,  # Right knee -> right hip
-            27: 25,  # Left ankle -> left knee
-            28: 26,  # Right ankle -> right knee
-            # Facial connections
-            34: 35,  # brow_inner_left -> brow_inner_right
-            35: 0,  # brow_inner_right -> nose
-            36: 34,  # brow_outer_left -> brow_inner_left
-            37: 35,  # brow_outer_right -> brow_inner_right
-            38: 34,  # lid_upper_left -> brow_inner_left
-            39: 35,  # lid_upper_right -> brow_inner_right
-            40: 38,  # lid_lower_left -> lid_upper_left
-            41: 39,  # lid_lower_right -> lid_upper_right
-            42: 44,  # lip_upper -> lip_corner_left
-            43: 45,  # lip_lower -> lip_corner_right
-            44: 42,  # lip_corner_left -> lip_upper
-            45: 42,  # lip_corner_right -> lip_upper
+            11: 33,
+            12: 33,
+            33: 0,
+            13: 11,
+            14: 12,
+            15: 13,
+            16: 14,
+            23: 11,
+            24: 12,
+            25: 23,
+            26: 24,
+            27: 25,
+            28: 26,
+            34: 35,
+            35: 0,
+            36: 34,
+            37: 35,
+            38: 34,
+            39: 35,
+            40: 38,
+            41: 39,
+            42: 44,
+            43: 45,
+            44: 42,
+            45: 42,
         }.get(idx, -1)
 
 
@@ -528,7 +556,6 @@ class Predictor(BasePredictor):
     def setup(self):
         os.makedirs("thirdparty", exist_ok=True)
 
-        # Download models if missing
         models = [
             (
                 "ssd_mobilenet_v2.tflite",
@@ -550,7 +577,6 @@ class Predictor(BasePredictor):
                 print(f"Downloading {filename}...")
                 urllib.request.urlretrieve(url, path)
 
-        # Initialize processors
         self.face_processor = vision.FaceLandmarker.create_from_options(
             vision.FaceLandmarkerOptions(
                 base_options=python.BaseOptions(
@@ -650,17 +676,14 @@ class Predictor(BasePredictor):
             font = ImageFont.load_default()
 
         for result in all_results:
-            # Draw bounding box
             startX, startY, endX, endY = result["box"]
             draw.rectangle(
                 [(startX, startY), (endX, endY)], outline=colors["green"], width=2
             )
 
-            # Draw keypoints and skeleton
             keypoints = result["fullbodyfacs"]["keypoints"]
             self.draw_skeleton(draw, keypoints, colors)
 
-            # Draw person ID
             label = f"Person {result['person_id']}"
             draw.text((startX, startY - 20), label, fill=colors["green"], font=font)
 
@@ -681,7 +704,7 @@ class Predictor(BasePredictor):
             parent_vis = parent.get("visibility", 1.0)
             child_vis = child.get("visibility", 1.0)
             if parent_vis < 0.5 or child_vis < 0.5:
-                continue  # Skip low-confidence connections
+                continue
             x1, y1 = parent["position"][0], parent["position"][1]
             x2, y2 = child["position"][0], child["position"][1]
             draw.line([(x1, y1), (x2, y2)], fill=colors["orange"], width=2)
