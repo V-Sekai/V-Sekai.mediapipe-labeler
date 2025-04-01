@@ -28,6 +28,7 @@ from cog import BasePredictor, Input, Path, BaseModel
 from PIL import Image
 from typing import Any, Dict, List, Tuple, Optional, Union
 from datetime import datetime
+from pathlib import Path as PathLib
 
 # Configuration
 COCO_KEYPOINT_NAMES = [
@@ -103,9 +104,11 @@ class Output(BaseModel):
     coco_keypoints: str
     facs: str
     fullbodyfacs: str
-    debug_image: Path
+    debug_media: Path
     hand_landmarks: Optional[str]
     num_people: int
+    media_type: str
+    total_frames: Optional[int] = None
 
 
 class PersonProcessor:
@@ -611,14 +614,27 @@ class Predictor(BasePredictor):
 
     def predict(
         self,
-        image_path: Path = Input(description="Input image"),
+        media_path: Path = Input(description="Input image or video file"),
         max_people: int = Input(
             description="Maximum number of people to detect (1-100)",
             ge=1,
             le=100,
             default=100,
         ),
+        frame_sample_rate: int = Input(
+            description="Process every nth frame for video input",
+            ge=1,
+            default=1,
+        ),
     ) -> Output:
+        media_type = "image"
+        if str(media_path).lower().endswith((".mp4", ".avi", ".mov", ".mkv")):
+            media_type = "video"
+            return self.process_video(media_path, max_people, frame_sample_rate)
+        else:
+            return self.process_image(media_path, max_people)
+
+    def process_image(self, image_path: Path, max_people: int) -> Output:
         img = Image.open(image_path).convert("RGB")
         img_np = np.array(img)
         original_h, original_w = img_np.shape[:2]
@@ -650,12 +666,122 @@ class Predictor(BasePredictor):
             fullbodyfacs=json.dumps(
                 {"people": [r["fullbodyfacs"] for r in all_results]}, indent=2
             ),
-            debug_image=self.create_debug_image(img_np, all_results),
+            debug_media=self.create_debug_image(img_np, all_results),
             hand_landmarks=json.dumps([r["hands"] for r in all_results])
             if any(r["hands"] for r in all_results)
             else None,
             num_people=len(all_results),
+            media_type="image",
         )
+
+    def process_video(
+        self, video_path: Path, max_people: int, frame_sample_rate: int
+    ) -> Output:
+        cap = cv2.VideoCapture(str(video_path))
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+        # Setup video writer
+        debug_video_path = "/tmp/debug_output.mp4"
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        out = cv2.VideoWriter(
+            debug_video_path, fourcc, fps / frame_sample_rate, (width, height)
+        )
+
+        frame_results = []
+        frame_count = 0
+        processed_count = 0
+
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            if frame_count % frame_sample_rate != 0:
+                frame_count += 1
+                continue
+
+            img_np = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            boxes = PersonProcessor.detect_people(img_np, max_people)
+            all_results = []
+
+            for person_id, box in enumerate(boxes):
+                startX, startY, endX, endY = box
+                crop = img_np[startY:endY, startX:endX]
+
+                if crop.size == 0:
+                    continue
+
+                person_result = PersonProcessor.process_crop(
+                    crop, box, (height, width), self
+                )
+
+                if person_result:
+                    person_result["person_id"] = person_id
+                    person_result["box"] = box
+                    all_results.append(person_result)
+
+            # Annotate frame
+            annotated_frame = self.annotate_video_frame(img_np, all_results)
+            out.write(cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR))
+
+            # Collect results
+            frame_results.append(
+                {
+                    "coco": self.aggregate_coco(all_results, width, height),
+                    "facs": [r["facs"] for r in all_results],
+                    "fullbodyfacs": [r["fullbodyfacs"] for r in all_results],
+                    "hands": [r["hands"] for r in all_results],
+                    "num_people": len(all_results),
+                }
+            )
+
+            processed_count += 1
+            frame_count += 1
+
+        cap.release()
+        out.release()
+
+        return Output(
+            coco_keypoints=json.dumps([f["coco"] for f in frame_results], indent=2),
+            facs=json.dumps(
+                {"frames": [{"people": f["facs"]} for f in frame_results]}, indent=2
+            ),
+            fullbodyfacs=json.dumps(
+                {"frames": [{"people": f["fullbodyfacs"]} for f in frame_results]},
+                indent=2,
+            ),
+            hand_landmarks=json.dumps([f["hands"] for f in frame_results], indent=2),
+            debug_media=Path(debug_video_path),
+            num_people=max(f["num_people"] for f in frame_results),
+            media_type="video",
+            total_frames=processed_count,
+        )
+
+    def annotate_video_frame(self, frame: np.ndarray, results: list) -> np.ndarray:
+        annotated = Image.fromarray(frame)
+        draw = ImageDraw.Draw(annotated)
+        colors = {
+            "green": (0, 255, 0),
+            "blue": (255, 0, 0),
+            "red": (0, 0, 255),
+            "orange": (255, 165, 0),
+            "yellow": (255, 255, 0),
+            "magenta": (255, 0, 255),
+        }
+
+        for result in results:
+            startX, startY, endX, endY = result["box"]
+            draw.rectangle(
+                [(startX, startY), (endX, endY)], outline=colors["green"], width=2
+            )
+
+            keypoints = result["fullbodyfacs"]["keypoints"]
+            self.draw_skeleton(draw, keypoints, colors)
+
+        return np.array(annotated)
 
     def create_debug_image(self, img_np: np.ndarray, all_results: list) -> Path:
         annotated = Image.fromarray(img_np)
@@ -751,6 +877,6 @@ class Predictor(BasePredictor):
 if __name__ == "__main__":
     predictor = Predictor()
     predictor.setup()
-    image_path = sys.argv[1] if len(sys.argv) > 1 else "image.jpg"
-    result = predictor.predict(image_path)
+    media_path = sys.argv[1] if len(sys.argv) > 1 else "input.mp4"
+    result = predictor.predict(media_path)
     print(json.dumps(json.loads(result.json()), indent=2))
