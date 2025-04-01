@@ -359,52 +359,93 @@ class FullBodyProcessor:
     def create_fullbodyfacs(pose, face, image_size):
         keypoints = []
         height, width = image_size
+        left_shoulder = right_shoulder = None
 
         if pose:
-            # Add virtual neck point (average of shoulders)
-            neck = None
+            # First pass to store shoulder positions
             for idx, lmk in enumerate(pose.landmark):
-                keypoints.append({
-                    "id": idx,
-                    "name": f"body_{idx}",
-                    "position": [lmk.x * width, lmk.y * height, lmk.z * width],
-                    "parent": FullBodyProcessor.get_parent(idx)
-                })
-                
-                # Store shoulder positions for neck calculation
-                if idx == 11:  # Left shoulder
+                keypoints.append(
+                    {
+                        "id": idx,
+                        "name": f"body_{idx}",
+                        "position": [lmk.x * width, lmk.y * height, lmk.z * width],
+                        "parent": FullBodyProcessor.get_parent(idx),
+                    }
+                )
+
+                if idx == 11:  # MediaPipe left shoulder index
                     left_shoulder = lmk
-                elif idx == 12:  # Right shoulder
+                elif idx == 12:  # MediaPipe right shoulder index
                     right_shoulder = lmk
 
-            # Create neck keypoint
+            # Add neck keypoint as midpoint between shoulders
             if left_shoulder and right_shoulder:
                 neck_x = (left_shoulder.x + right_shoulder.x) / 2 * width
                 neck_y = (left_shoulder.y + right_shoulder.y) / 2 * height
                 neck_z = (left_shoulder.z + right_shoulder.z) / 2 * width
-                keypoints.append({
-                    "id": 33,
-                    "name": "neck",
-                    "position": [neck_x, neck_y, neck_z],
-                    "parent": 0  # Connect neck to nose
-                })
+                keypoints.append(
+                    {
+                        "id": 33,
+                        "name": "neck",
+                        "position": [neck_x, neck_y, neck_z],
+                        "parent": 0,  # Connect neck to nose
+                    }
+                )
 
-        # Update hierarchy
-        @staticmethod
-        def get_parent(idx):
-            hierarchy = {
-                11: 33,  # Left shoulder -> neck
-                12: 33,  # Right shoulder -> neck
-                33: 0,   # Neck -> nose
-                # Keep other connections the same
-                13: 11, 14: 12, 15: 13, 16: 14,
-                23: 11, 24: 12, 25: 23, 26: 24,
-                27: 25, 28: 26
-            }
-            return hierarchy.get(idx, -1)
+        # Adjusted facial map to avoid ID conflicts
+        facial_map = {
+            151: 34,  # brow_inner_left
+            334: 35,  # brow_inner_right
+            46: 36,  # brow_outer_left
+            276: 37,  # brow_outer_right
+            159: 38,  # lid_upper_left
+            386: 39,  # lid_upper_right
+            145: 40,  # lid_lower_left
+            374: 41,  # lid_lower_right
+            13: 42,  # lip_upper
+            14: 43,  # lip_lower
+            61: 44,  # lip_corner_left
+            291: 45,  # lip_corner_right
+        }
+
+        if face:
+            for mp_idx, facs_id in facial_map.items():
+                if mp_idx < len(face):
+                    lmk = face[mp_idx]
+                    keypoints.append(
+                        {
+                            "id": facs_id,
+                            "name": COCO_KEYPOINT_NAMES[facs_id - 17],
+                            "position": [lmk.x * width, lmk.y * height, lmk.z * width],
+                            "parent": 0,  # Facial features connect to nose
+                        }
+                    )
+
+        return {"keypoints": keypoints}
+
+    @staticmethod
+    def calculate_bbox(keypoints):
+        """Calculate bounding box from keypoints with visibility > 0"""
+        valid = [
+            (keypoints[i], keypoints[i + 1])
+            for i in range(0, len(keypoints), 3)
+            if keypoints[i + 2] > 0
+        ]
+        if not valid:
+            return [0.0, 0.0, 0.0, 0.0]
+        x = [p[0] for p in valid]
+        y = [p[1] for p in valid]
+        return [
+            float(min(x)),
+            float(min(y)),
+            float(max(x) - min(x)),
+            float(max(y) - min(y)),
+        ]
 
     @staticmethod
     def process_hands(left_hand, right_hand):
+        """Process hand landmarks into standardized format"""
+
         def process_single_hand(hand, is_left=True):
             if not hand:
                 return []
@@ -429,51 +470,25 @@ class FullBodyProcessor:
 
     @staticmethod
     def get_parent(idx):
-        hierarchy = {
-            11: 7,
-            12: 8,
-            13: 11,
-            14: 12,
-            15: 13,
-            16: 14,
-            23: 11,
-            24: 12,
-            25: 23,
-            26: 24,
-            27: 25,
-            28: 26,
-            33: 0,
-            34: 0,
-            35: 0,
-            36: 0,
-            37: 0,
-            38: 0,
-            39: 0,
-            40: 0,
-            41: 0,
-            42: 0,
-            43: 0,
-            44: 0,
-        }
-        return hierarchy.get(idx, -1)
-
-    @staticmethod
-    def calculate_bbox(keypoints):
-        valid = [
-            (keypoints[i], keypoints[i + 1])
-            for i in range(0, len(keypoints), 3)
-            if keypoints[i + 2] > 0
-        ]
-        if not valid:
-            return [0.0, 0.0, 0.0, 0.0]
-        x = [p[0] for p in valid]
-        y = [p[1] for p in valid]
-        return [
-            float(min(x)),
-            float(min(y)),
-            float(max(x) - min(x)),
-            float(max(y) - min(y)),
-        ]
+        return {
+            # Body connections
+            11: 33,  # Left shoulder -> neck
+            12: 33,  # Right shoulder -> neck
+            33: 0,  # Neck -> nose
+            # Original MediaPipe connections
+            13: 11,  # Left elbow -> left shoulder
+            14: 12,  # Right elbow -> right shoulder
+            15: 13,  # Left wrist -> left elbow
+            16: 14,  # Right wrist -> right elbow
+            23: 11,  # Left hip -> left shoulder
+            24: 12,  # Right hip -> right shoulder
+            25: 23,  # Left knee -> left hip
+            26: 24,  # Right knee -> right hip
+            27: 25,  # Left ankle -> left knee
+            28: 26,  # Right ankle -> right knee
+            # Facial connections (all to nose)
+            **{i: 0 for i in range(34, 46)},
+        }.get(idx, -1)
 
 
 class Predictor(BasePredictor):
