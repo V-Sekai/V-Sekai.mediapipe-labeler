@@ -539,11 +539,10 @@ class Predictor(BasePredictor):
         img_np = np.array(img)
         original_h, original_w = img_np.shape[:2]
 
-        # Detect people with configurable maximum
         boxes = PersonProcessor.detect_people(img_np, max_people)
         all_results = []
 
-        for box in boxes:
+        for person_id, box in enumerate(boxes):
             startX, startY, endX, endY = box
             crop = img_np[startY:endY, startX:endX]
 
@@ -555,24 +554,109 @@ class Predictor(BasePredictor):
             )
 
             if person_result:
+                person_result["person_id"] = person_id
+                person_result["box"] = box
                 all_results.append(person_result)
 
-        # Aggregate results
-        coco_output = self.aggregate_coco(all_results, original_w, original_h)
-        facs_output = [r["facs"] for r in all_results]
-        fullbody_output = [r["fullbodyfacs"] for r in all_results]
-        hand_output = [r["hands"] for r in all_results]
-
         return Output(
-            coco_keypoints=json.dumps(coco_output, indent=2),
-            facs=json.dumps({"people": facs_output}, indent=2),
-            fullbodyfacs=json.dumps({"people": fullbody_output}, indent=2),
-            debug_image=self.create_debug_image(img_np, boxes),
-            hand_landmarks=json.dumps(hand_output) if any(hand_output) else None,
+            coco_keypoints=json.dumps(
+                self.aggregate_coco(all_results, original_w, original_h), indent=2
+            ),
+            facs=json.dumps({"people": [r["facs"] for r in all_results]}, indent=2),
+            fullbodyfacs=json.dumps(
+                {"people": [r["fullbodyfacs"] for r in all_results]}, indent=2
+            ),
+            debug_image=self.create_debug_image(img_np, all_results),
+            hand_landmarks=json.dumps([r["hands"] for r in all_results])
+            if any(r["hands"] for r in all_results)
+            else None,
             num_people=len(all_results),
         )
 
+    def create_debug_image(self, img_np: np.ndarray, all_results: list) -> Path:
+        annotated = img_np.copy()
+        skeleton_connections = [
+            (16, 14),
+            (14, 12),
+            (17, 15),
+            (15, 13),
+            (12, 13),
+            (6, 12),
+            (7, 13),
+            (6, 7),
+            (6, 8),
+            (7, 9),
+            (8, 10),
+            (9, 11),
+            (2, 3),
+            (1, 2),
+            (1, 3),
+            (2, 4),
+            (3, 5),
+            (4, 6),
+            (5, 7),
+        ]
+
+        for result in all_results:
+            # Draw bounding box
+            startX, startY, endX, endY = result["box"]
+            cv2.rectangle(annotated, (startX, startY), (endX, endY), (0, 255, 0), 2)
+
+            # Get keypoints data
+            coco_data = result["coco"]["annotations"][0]
+            keypoints = coco_data["keypoints"]
+
+            # Draw keypoints
+            for i in range(0, len(keypoints), 3):
+                x = int(keypoints[i])
+                y = int(keypoints[i + 1])
+                vis = keypoints[i + 2]
+                if vis > 0:
+                    color = (255, 0, 0) if i < 17 * 3 else (0, 0, 255)  # Body vs face
+                    cv2.circle(annotated, (x, y), 4, color, -1)
+
+            # Draw skeleton connections
+            for i, j in skeleton_connections:
+                idx_i = i * 3
+                idx_j = j * 3
+                if idx_i >= len(keypoints) or idx_j >= len(keypoints):
+                    continue
+
+                x1, y1, v1 = keypoints[idx_i : idx_i + 3]
+                x2, y2, v2 = keypoints[idx_j : idx_j + 3]
+
+                if v1 > 0 and v2 > 0:
+                    cv2.line(
+                        annotated,
+                        (int(x1), int(y1)),
+                        (int(x2), int(y2)),
+                        (255, 165, 0),
+                        2,
+                    )  # Orange connections
+
+            # Draw person ID
+            label = f"Person {result['person_id']} ({coco_data['num_keypoints']} pts)"
+            cv2.putText(
+                annotated,
+                label,
+                (startX, startY - 10),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (0, 255, 0),
+                2,
+            )
+
+        debug_path = "/tmp/debug_output.jpg"
+        Image.fromarray(annotated).save(debug_path)
+        return Path(debug_path)
+
     def aggregate_coco(self, results, width, height):
+        annotations = []
+        for idx, res in enumerate(results):
+            ann = res["coco"]["annotations"][0].copy()
+            ann["id"] = idx  # Assign unique ID
+            annotations.append(ann)
+
         return {
             "info": {
                 "description": "Multi-person COCO 1.1 Extended",
@@ -592,19 +676,11 @@ class Predictor(BasePredictor):
                     "date_captured": datetime.now().isoformat(),
                 }
             ],
-            "annotations": [res["coco"]["annotations"][0] for res in results],
+            "annotations": annotations,
             "categories": FullBodyProcessor.create_coco_output(None, None, (0, 0))[
                 "categories"
             ],
         }
-
-    def create_debug_image(self, img_np, boxes):
-        annotated = img_np.copy()
-        for startX, startY, endX, endY in boxes:
-            cv2.rectangle(annotated, (startX, startY), (endX, endY), (0, 255, 0), 2)
-        debug_path = "/tmp/debug_output.jpg"
-        Image.fromarray(annotated).save(debug_path)
-        return Path(debug_path)
 
 
 if __name__ == "__main__":
