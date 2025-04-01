@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 import cv2
 import json
 import numpy as np
@@ -25,7 +26,6 @@ from cog import BasePredictor, Input, Path, BaseModel
 from PIL import Image
 from typing import Any, Dict, List, Tuple, Optional
 from datetime import datetime
-from collections import deque
 
 # Configuration
 COCO_KEYPOINT_NAMES = [
@@ -59,48 +59,41 @@ COCO_KEYPOINT_NAMES = [
     "lip_corner_left",
     "lip_corner_right",
 ]
-COCO_SKELETON = [
-    [16, 14],
-    [14, 12],
-    [17, 15],
-    [15, 13],
-    [12, 13],
-    [6, 12],
-    [7, 13],
-    [6, 7],
-    [6, 8],
-    [7, 9],
-    [8, 10],
-    [9, 11],
-    [2, 3],
-    [1, 2],
-    [1, 3],
-    [2, 4],
-    [3, 5],
-    [4, 6],
-    [5, 7],
-    [0, 17],
-    [0, 18],
-    [17, 19],
-    [18, 20],
-    [17, 21],
-    [18, 22],
-    [21, 23],
-    [22, 24],
-    [0, 25],
-    [0, 26],
-    [25, 27],
-    [26, 28],
-]
-FACS_AU_MAPPING = {
-    "AU1": ["browInnerUp"],
-    "AU2": ["browOuterUpLeft", "browOuterUpRight"],
-    "AU4": ["browDownLeft", "browDownRight"],
-    "AU5": ["eyeBlinkLeft", "eyeBlinkRight"],
-    "AU6": ["eyeSquintLeft", "eyeSquintRight"],
-    "AU9": ["noseSneerLeft", "noseSneerRight"],
-    "AU12": ["mouthSmileLeft", "mouthSmileRight"],
-    "AU25": ["jawOpen", "mouthStretch"],
+
+LEFT_HAND_VRM_MAPPING = {
+    1: "leftThumbMetacarpal",
+    2: "leftThumbProximal",
+    3: "leftThumbDistal",
+    5: "leftIndexProximal",
+    6: "leftIndexIntermediate",
+    7: "leftIndexDistal",
+    9: "leftMiddleProximal",
+    10: "leftMiddleIntermediate",
+    11: "leftMiddleDistal",
+    13: "leftRingProximal",
+    14: "leftRingIntermediate",
+    15: "leftRingDistal",
+    17: "leftLittleProximal",
+    18: "leftLittleIntermediate",
+    19: "leftLittleDistal",
+}
+
+RIGHT_HAND_VRM_MAPPING = {
+    1: "rightThumbMetacarpal",
+    2: "rightThumbProximal",
+    3: "rightThumbDistal",
+    5: "rightIndexProximal",
+    6: "rightIndexIntermediate",
+    7: "rightIndexDistal",
+    9: "rightMiddleProximal",
+    10: "rightMiddleIntermediate",
+    11: "rightMiddleDistal",
+    13: "rightRingProximal",
+    14: "rightRingIntermediate",
+    15: "rightRingDistal",
+    17: "rightLittleProximal",
+    18: "rightLittleIntermediate",
+    19: "rightLittleDistal",
 }
 
 
@@ -115,13 +108,13 @@ class Output(BaseModel):
 class FullBodyProcessor:
     @staticmethod
     def process_results(
-        pose_landmarks: Optional[landmark_pb2.NormalizedLandmarkList],
-        face_landmarks: Optional[landmark_pb2.NormalizedLandmarkList],
-        face_blendshapes: List[Any],
-        left_hand: Optional[List[Landmark]],
-        right_hand: Optional[List[Landmark]],
-        image_size: Tuple[int, int],
-    ) -> Dict[str, Any]:
+        pose_landmarks,
+        face_landmarks,
+        face_blendshapes,
+        left_hand,
+        right_hand,
+        image_size,
+    ):
         return {
             "coco": FullBodyProcessor._create_coco_output(
                 pose_landmarks, face_landmarks, image_size
@@ -134,7 +127,6 @@ class FullBodyProcessor:
 
     @staticmethod
     def _create_coco_output(pose, face, image_size):
-        """Generate COCO 1.1 compliant JSON output"""
         height, width = image_size
         keypoints = []
         num_visible = 0
@@ -148,6 +140,7 @@ class FullBodyProcessor:
                 num_visible += 1 if vis > 0 else 0
             else:
                 keypoints += [0.0, 0.0, 0]
+
         face_landmarks_list = face if face else []
         facial_indices = [151, 334, 46, 276, 159, 386, 145, 374, 13, 14, 61, 291]
         for idx in facial_indices:
@@ -157,6 +150,7 @@ class FullBodyProcessor:
                 num_visible += 1
             else:
                 keypoints += [0.0, 0.0, 0]
+
         return {
             "info": {
                 "description": "COCO 1.1 Extended with Facial Keypoints",
@@ -200,19 +194,61 @@ class FullBodyProcessor:
                     "name": "person",
                     "supercategory": "person",
                     "keypoints": COCO_KEYPOINT_NAMES,
-                    "skeleton": COCO_SKELETON,
+                    "skeleton": [
+                        [16, 14],
+                        [14, 12],
+                        [17, 15],
+                        [15, 13],
+                        [12, 13],
+                        [6, 12],
+                        [7, 13],
+                        [6, 7],
+                        [6, 8],
+                        [7, 9],
+                        [8, 10],
+                        [9, 11],
+                        [2, 3],
+                        [1, 2],
+                        [1, 3],
+                        [2, 4],
+                        [3, 5],
+                        [4, 6],
+                        [5, 7],
+                        [0, 17],
+                        [0, 18],
+                        [17, 19],
+                        [18, 20],
+                        [17, 21],
+                        [18, 22],
+                        [21, 23],
+                        [22, 24],
+                        [0, 25],
+                        [0, 26],
+                        [25, 27],
+                        [26, 28],
+                    ],
                 }
             ],
         }
 
     @staticmethod
-    def _create_facs_output(blendshapes: List[Any]) -> Dict[str, Any]:
-        """Generate FACS-compliant AU intensities"""
+    def _create_facs_output(blendshapes):
         au_scores = {}
         blendshape_dict = {}
         for bs in blendshapes:
             if hasattr(bs, "category_name") and hasattr(bs, "score"):
                 blendshape_dict[bs.category_name] = bs.score
+
+        FACS_AU_MAPPING = {
+            "AU1": ["browInnerUp"],
+            "AU2": ["browOuterUpLeft", "browOuterUpRight"],
+            "AU4": ["browDownLeft", "browDownRight"],
+            "AU5": ["eyeBlinkLeft", "eyeBlinkRight"],
+            "AU6": ["eyeSquintLeft", "eyeSquintRight"],
+            "AU9": ["noseSneerLeft", "noseSneerRight"],
+            "AU12": ["mouthSmileLeft", "mouthSmileRight"],
+            "AU25": ["jawOpen", "mouthStretch"],
+        }
 
         for au, components in FACS_AU_MAPPING.items():
             scores = [blendshape_dict.get(name, 0.0) for name in components]
@@ -229,13 +265,11 @@ class FullBodyProcessor:
 
     @staticmethod
     def _create_fullbodyfacs(pose, face, image_size):
-        """Generate FullBodyFACS hierarchy"""
         keypoints = []
         height, width = image_size
-        body_landmarks = pose.landmark if pose else []
-        for idx in range(33):
-            if idx < len(body_landmarks):
-                lmk = body_landmarks[idx]
+
+        if pose:
+            for idx, lmk in enumerate(pose.landmark):
                 keypoints.append(
                     {
                         "id": idx,
@@ -244,6 +278,7 @@ class FullBodyProcessor:
                         "parent": FullBodyProcessor._get_parent(idx),
                     }
                 )
+
         facial_map = {
             151: 17,
             334: 18,
@@ -258,22 +293,24 @@ class FullBodyProcessor:
             61: 27,
             291: 28,
         }
-        face_landmarks_list = face if face else []
-        for mp_idx, facs_idx in facial_map.items():
-            if mp_idx < len(face_landmarks_list):
-                lmk = face_landmarks_list[mp_idx]
-                keypoints.append(
-                    {
-                        "id": facs_idx,
-                        "name": COCO_KEYPOINT_NAMES[facs_idx],
-                        "position": [lmk.x * width, lmk.y * height, lmk.z * width],
-                        "parent": 0,
-                    }
-                )
+
+        if face:
+            for mp_idx, facs_idx in facial_map.items():
+                if mp_idx < len(face):
+                    lmk = face[mp_idx]
+                    keypoints.append(
+                        {
+                            "id": facs_idx,
+                            "name": COCO_KEYPOINT_NAMES[facs_idx],
+                            "position": [lmk.x * width, lmk.y * height, lmk.z * width],
+                            "parent": 0,
+                        }
+                    )
+
         return {"keypoints": keypoints}
 
     @staticmethod
-    def _get_parent(idx: int) -> int:
+    def _get_parent(idx):
         hierarchy = {
             0: -1,
             11: 5,
@@ -292,7 +329,7 @@ class FullBodyProcessor:
         return hierarchy.get(idx, -1)
 
     @staticmethod
-    def _calculate_bbox(keypoints: List[float]) -> List[float]:
+    def _calculate_bbox(keypoints):
         valid = [
             (keypoints[i], keypoints[i + 1])
             for i in range(0, len(keypoints), 3)
@@ -311,8 +348,7 @@ class FullBodyProcessor:
 
 
 class Predictor(BasePredictor):
-    def setup(self) -> None:
-        """Initialize MediaPipe models"""
+    def setup(self):
         self.face_processor = vision.FaceLandmarker.create_from_options(
             vision.FaceLandmarkerOptions(
                 base_options=python.BaseOptions(
@@ -322,15 +358,17 @@ class Predictor(BasePredictor):
                 num_faces=1,
                 min_face_detection_confidence=0.5,
                 min_face_presence_confidence=0.5,
-                min_tracking_confidence=0.5
+                min_tracking_confidence=0.5,
             )
         )
+
         self.pose_processor = mp.solutions.pose.Pose(
             static_image_mode=True,
             model_complexity=2,
             min_detection_confidence=0.5,
-            smooth_landmarks=True
+            smooth_landmarks=True,
         )
+
         self.hand_processor = vision.HandLandmarker.create_from_options(
             vision.HandLandmarkerOptions(
                 base_options=python.BaseOptions(
@@ -339,24 +377,23 @@ class Predictor(BasePredictor):
                 num_hands=2,
                 min_hand_detection_confidence=0.5,
                 min_hand_presence_confidence=0.5,
-                min_tracking_confidence=0.5
+                min_tracking_confidence=0.5,
             )
         )
 
     def predict(self, image_path: Path = Input(description="Input image")) -> Output:
-        """Process an image and return all outputs"""
         img = Image.open(image_path).convert("RGB")
         img_np = np.array(img)
         height, width, _ = img_np.shape
-        # Convert to MediaPipe Image
+
         mp_image = mp.Image(
             image_format=mp.ImageFormat.SRGB, data=img_np.astype(np.uint8)
         )
-        # Detect features
+
         face_result = self.face_processor.detect(mp_image)
         pose_result = self.pose_processor.process(img_np)
         hand_result = self.hand_processor.detect(mp_image)
-        # Process hands
+
         left_hand, right_hand = None, None
         if hand_result.hand_landmarks:
             for idx, handedness in enumerate(hand_result.handedness):
@@ -364,19 +401,16 @@ class Predictor(BasePredictor):
                     left_hand = hand_result.hand_landmarks[idx]
                 else:
                     right_hand = hand_result.hand_landmarks[idx]
-        # Process results
+
         results = FullBodyProcessor.process_results(
-            pose_landmarks=pose_result.pose_landmarks,
-            face_landmarks=face_result.face_landmarks[0]
-            if face_result.face_landmarks
-            else None,
-            face_blendshapes=face_result.face_blendshapes[0]
-            if face_result.face_blendshapes
-            else [],
-            left_hand=left_hand,
-            right_hand=right_hand,
-            image_size=(height, width),
+            pose_result.pose_landmarks,
+            face_result.face_landmarks[0] if face_result.face_landmarks else None,
+            face_result.face_blendshapes[0] if face_result.face_blendshapes else [],
+            left_hand,
+            right_hand,
+            (height, width),
         )
+
         return Output(
             coco_keypoints=json.dumps(results["coco"], indent=2),
             facs=json.dumps(results["facs"], indent=2),
@@ -384,31 +418,43 @@ class Predictor(BasePredictor):
             debug_image=self._create_debug_image(
                 img_np, face_result, pose_result, hand_result, image_path
             ),
-            hand_landmarks=json.dumps(
+            hand_landmarks=self._process_hands(left_hand, right_hand),
+        )
+
+    def _process_hands(self, left_hand, right_hand):
+        def process_single_hand(hand, is_left=True):
+            if not hand:
+                return []
+            return [
                 {
-                    "left": [{"x": lmk.x, "y": lmk.y} for lmk in left_hand]
-                    if left_hand
-                    else [],
-                    "right": [{"x": lmk.x, "y": lmk.y} for lmk in right_hand]
-                    if right_hand
-                    else [],
+                    "index": idx,
+                    "x": lmk.x,
+                    "y": lmk.y,
+                    "name": ("left_wrist" if is_left else "right_wrist")
+                    if idx == 0
+                    else (
+                        LEFT_HAND_VRM_MAPPING if is_left else RIGHT_HAND_VRM_MAPPING
+                    ).get(idx, None),
+                }
+                for idx, lmk in enumerate(hand)
+            ]
+
+        return (
+            json.dumps(
+                {
+                    "left": process_single_hand(left_hand, True),
+                    "right": process_single_hand(right_hand, False),
                 }
             )
             if left_hand or right_hand
-            else None,
+            else None
         )
 
     def _create_debug_image(
-        self,
-        img_np: np.ndarray,
-        face_result: vision.FaceLandmarkerResult,
-        pose_result: mp.tasks.vision.PoseLandmarkerResult,
-        hand_result: vision.HandLandmarkerResult,
-        image_path: Path,
-    ) -> Path:
-        """Generate annotated debug image"""
+        self, img_np, face_result, pose_result, hand_result, image_path
+    ):
         annotated = img_np.copy()
-        # Draw face landmarks
+
         if face_result.face_landmarks:
             landmarks = landmark_pb2.NormalizedLandmarkList()
             landmarks.landmark.extend(
@@ -420,14 +466,14 @@ class Predictor(BasePredictor):
             mp.solutions.drawing_utils.draw_landmarks(
                 annotated, landmarks, mp.solutions.face_mesh.FACEMESH_CONTOURS
             )
-        # Draw pose skeleton
+
         if pose_result.pose_landmarks:
             mp.solutions.drawing_utils.draw_landmarks(
                 annotated,
                 pose_result.pose_landmarks,
                 mp.solutions.pose.POSE_CONNECTIONS,
             )
-        # Draw hand landmarks
+
         if hand_result.hand_landmarks:
             for hand_landmarks in hand_result.hand_landmarks:
                 hand_landmarks_proto = landmark_pb2.NormalizedLandmarkList()
@@ -440,6 +486,7 @@ class Predictor(BasePredictor):
                 mp.solutions.drawing_utils.draw_landmarks(
                     annotated, hand_landmarks_proto, mp.solutions.hands.HAND_CONNECTIONS
                 )
+
         debug_path = f"/tmp/{os.path.basename(image_path)}_debug.jpg"
         Image.fromarray(annotated).save(debug_path)
         return Path(debug_path)
