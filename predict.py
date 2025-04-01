@@ -533,7 +533,7 @@ class Predictor(BasePredictor):
             description="Maximum number of people to detect (1-100)",
             ge=1,
             le=100,
-            default=10,
+            default=100,
         ),
     ) -> Output:
         img = Image.open(image_path).convert("RGB")
