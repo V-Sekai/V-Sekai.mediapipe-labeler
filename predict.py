@@ -372,28 +372,28 @@ class FullBodyProcessor:
                 )
 
         facial_map = {
-            151: 17,
-            334: 18,
-            46: 19,
-            276: 20,
-            159: 21,
-            386: 22,
-            145: 23,
-            374: 24,
-            13: 25,
-            14: 26,
-            61: 27,
-            291: 28,
+            151: 33,
+            334: 34,
+            46: 35,
+            276: 36,
+            159: 37,
+            386: 38,
+            145: 39,
+            374: 40,
+            13: 41,
+            14: 42,
+            61: 43,
+            291: 44,
         }
 
         if face:
-            for mp_idx, facs_idx in facial_map.items():
+            for mp_idx, facs_id in facial_map.items():
                 if mp_idx < len(face):
                     lmk = face[mp_idx]
                     keypoints.append(
                         {
-                            "id": facs_idx,
-                            "name": COCO_KEYPOINT_NAMES[facs_idx],
+                            "id": facs_id,
+                            "name": COCO_KEYPOINT_NAMES[facs_id - 17],
                             "position": [lmk.x * width, lmk.y * height, lmk.z * width],
                             "parent": 0,
                         }
@@ -428,9 +428,8 @@ class FullBodyProcessor:
     @staticmethod
     def get_parent(idx):
         hierarchy = {
-            0: -1,
-            11: 5,
-            12: 6,
+            11: 7,
+            12: 8,
             13: 11,
             14: 12,
             15: 13,
@@ -441,6 +440,18 @@ class FullBodyProcessor:
             26: 24,
             27: 25,
             28: 26,
+            33: 0,
+            34: 0,
+            35: 0,
+            36: 0,
+            37: 0,
+            38: 0,
+            39: 0,
+            40: 0,
+            41: 0,
+            42: 0,
+            43: 0,
+            44: 0,
         }
         return hierarchy.get(idx, -1)
 
@@ -465,40 +476,36 @@ class FullBodyProcessor:
 
 class Predictor(BasePredictor):
     def setup(self):
-        # Create model directory and download required models
         os.makedirs("thirdparty", exist_ok=True)
 
-        # Download COCO detector
-        ssd_model_path = "thirdparty/ssd_mobilenet_v2.tflite"
-        if not os.path.exists(ssd_model_path):
-            print("Downloading COCO object detector...")
-            urllib.request.urlretrieve(
+        # Download models if missing
+        models = [
+            (
+                "ssd_mobilenet_v2.tflite",
                 "https://storage.googleapis.com/mediapipe-models/object_detector/ssd_mobilenet_v2/float32/1/ssd_mobilenet_v2.tflite",
-                ssd_model_path,
-            )
-
-        # Download face landmark model
-        face_model_path = "thirdparty/face_landmarker.task"
-        if not os.path.exists(face_model_path):
-            print("Downloading face landmark model...")
-            urllib.request.urlretrieve(
+            ),
+            (
+                "face_landmarker.task",
                 "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
-                face_model_path,
-            )
-
-        # Download hand landmark model
-        hand_model_path = "thirdparty/hand_landmarker.task"
-        if not os.path.exists(hand_model_path):
-            print("Downloading hand landmark model...")
-            urllib.request.urlretrieve(
+            ),
+            (
+                "hand_landmarker.task",
                 "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
-                hand_model_path,
-            )
+            ),
+        ]
 
-        # Initialize face processor
+        for filename, url in models:
+            path = f"thirdparty/{filename}"
+            if not os.path.exists(path):
+                print(f"Downloading {filename}...")
+                urllib.request.urlretrieve(url, path)
+
+        # Initialize processors
         self.face_processor = vision.FaceLandmarker.create_from_options(
             vision.FaceLandmarkerOptions(
-                base_options=python.BaseOptions(model_asset_path=face_model_path),
+                base_options=python.BaseOptions(
+                    model_asset_path="thirdparty/face_landmarker.task"
+                ),
                 output_face_blendshapes=True,
                 num_faces=1,
                 min_face_detection_confidence=0.5,
@@ -507,7 +514,6 @@ class Predictor(BasePredictor):
             )
         )
 
-        # Initialize pose processor
         self.pose_processor = mp.solutions.pose.Pose(
             static_image_mode=True,
             model_complexity=2,
@@ -515,10 +521,11 @@ class Predictor(BasePredictor):
             smooth_landmarks=True,
         )
 
-        # Initialize hand processor
         self.hand_processor = vision.HandLandmarker.create_from_options(
             vision.HandLandmarkerOptions(
-                base_options=python.BaseOptions(model_asset_path=hand_model_path),
+                base_options=python.BaseOptions(
+                    model_asset_path="thirdparty/hand_landmarker.task"
+                ),
                 num_hands=2,
                 min_hand_detection_confidence=0.5,
                 min_hand_presence_confidence=0.5,
@@ -575,11 +582,9 @@ class Predictor(BasePredictor):
         )
 
     def create_debug_image(self, img_np: np.ndarray, all_results: list) -> Path:
-        # Convert numpy array to PIL Image
         annotated = Image.fromarray(img_np)
         draw = ImageDraw.Draw(annotated)
 
-        # Define colors
         colors = {
             "green": (0, 255, 0),
             "blue": (255, 0, 0),
@@ -589,7 +594,6 @@ class Predictor(BasePredictor):
             "magenta": (255, 0, 255),
         }
 
-        # Define font (requires PIL's default font)
         try:
             font = ImageFont.truetype("arial.ttf", 15)
         except:
@@ -602,92 +606,46 @@ class Predictor(BasePredictor):
                 [(startX, startY), (endX, endY)], outline=colors["green"], width=2
             )
 
-            # Get keypoints data
-            coco_data = result["coco"]["annotations"][0]
-            keypoints = coco_data["keypoints"]
-
-            # Draw keypoints
-            for i in range(0, len(keypoints), 3):
-                x = int(keypoints[i])
-                y = int(keypoints[i + 1])
-                vis = keypoints[i + 2]
-                if vis > 0:
-                    color = colors["blue"] if i < 17 * 3 else colors["red"]
-                    bbox = [(x - 4, y - 4), (x + 4, y + 4)]
-                    draw.ellipse(bbox, fill=color, outline=None)
-
-            # Draw skeleton connections
-            skeleton_connections = [
-                (16, 14),
-                (14, 12),
-                (17, 15),
-                (15, 13),
-                (12, 13),
-                (6, 12),
-                (7, 13),
-                (6, 7),
-                (6, 8),
-                (7, 9),
-                (8, 10),
-                (9, 11),
-                (2, 3),
-                (1, 2),
-                (1, 3),
-                (2, 4),
-                (3, 5),
-                (4, 6),
-                (5, 7),
-            ]
-
-            for i, j in skeleton_connections:
-                idx_i = i * 3
-                idx_j = j * 3
-                if idx_i >= len(keypoints) or idx_j >= len(keypoints):
-                    continue
-
-                x1, y1, v1 = keypoints[idx_i : idx_i + 3]
-                x2, y2, v2 = keypoints[idx_j : idx_j + 3]
-
-                if v1 > 0 and v2 > 0:
-                    draw.line(
-                        [(int(x1), int(y1)), (int(x2), int(y2))],
-                        fill=colors["orange"],
-                        width=2,
-                    )
+            # Draw keypoints and skeleton
+            keypoints = result["fullbodyfacs"]["keypoints"]
+            self.draw_skeleton(draw, keypoints, colors)
 
             # Draw person ID
-            label = f"Person {result['person_id']} ({coco_data['num_keypoints']} pts)"
+            label = f"Person {result['person_id']}"
             draw.text((startX, startY - 20), label, fill=colors["green"], font=font)
-
-            # Draw hand landmarks
-            hands = result.get("hands", {})
-            w, h = annotated.size
-
-            # Draw left hand landmarks (yellow)
-            for landmark in hands.get("left", []):
-                if landmark["name"]:
-                    x = int(landmark["x"] * w)
-                    y = int(landmark["y"] * h)
-                    bbox = [(x - 4, y - 4), (x + 4, y + 4)]
-                    draw.ellipse(bbox, fill=colors["yellow"], outline=None)
-
-            # Draw right hand landmarks (magenta)
-            for landmark in hands.get("right", []):
-                if landmark["name"]:
-                    x = int(landmark["x"] * w)
-                    y = int(landmark["y"] * h)
-                    bbox = [(x - 4, y - 4), (x + 4, y + 4)]
-                    draw.ellipse(bbox, fill=colors["magenta"], outline=None)
 
         debug_path = "/tmp/debug_output.jpg"
         annotated.save(debug_path)
         return Path(debug_path)
 
+    def draw_skeleton(self, draw, keypoints, colors):
+        # Convert keypoints to dict for easy lookup
+        kp_dict = {kp["id"]: kp for kp in keypoints}
+
+        # Define connections based on parent relationships
+        connections = []
+        for kp in keypoints:
+            if kp["parent"] != -1 and kp["parent"] in kp_dict:
+                connections.append((kp_dict[kp["parent"]], kp))
+
+        # Draw connections
+        for parent, child in connections:
+            x1, y1 = parent["position"][0], parent["position"][1]
+            x2, y2 = child["position"][0], child["position"][1]
+            draw.line([(x1, y1), (x2, y2)], fill=colors["orange"], width=2)
+
+        # Draw keypoints
+        for kp in keypoints:
+            x, y = kp["position"][0], kp["position"][1]
+            bbox = [(x - 4, y - 4), (x + 4, y + 4)]
+            color = colors["blue"] if kp["id"] < 33 else colors["red"]
+            draw.ellipse(bbox, fill=color, outline=None)
+
     def aggregate_coco(self, results, width, height):
         annotations = []
         for idx, res in enumerate(results):
             ann = res["coco"]["annotations"][0].copy()
-            ann["id"] = idx  # Assign unique ID
+            ann["id"] = idx
             annotations.append(ann)
 
         return {
