@@ -99,6 +99,136 @@ RIGHT_HAND_VRM_MAPPING = {
 }
 
 
+class SkeletalValidator:
+    BONE_RATIOS = {
+        ("left_shoulder", "left_elbow", "left_wrist"): (0.6, 0.3),
+        ("right_shoulder", "right_elbow", "right_wrist"): (0.6, 0.3),
+        ("left_hip", "left_knee", "left_ankle"): (0.55, 0.25),
+        ("right_hip", "right_knee", "right_ankle"): (0.55, 0.25),
+        ("nose", "neck", "mid_hip"): (0.8, 0.3),
+    }
+
+    JOINT_ANGLE_RANGES = {
+        "elbow": (20, 160),
+        "knee": (50, 180),
+        "shoulder": (60, 180),
+        "hip": (70, 120),
+    }
+
+    @classmethod
+    def validate_skeleton(cls, keypoints):
+        try:
+            kp_dict = {kp["name"]: kp for kp in keypoints}
+
+            if not cls.check_parent_connections(kp_dict):
+                return False
+            if not cls.validate_bone_ratios(kp_dict):
+                return False
+            if not cls.validate_joint_angles(kp_dict):
+                return False
+            if not cls.validate_global_proportions(kp_dict):
+                return False
+
+            return True
+        except KeyError:
+            return False
+
+    @classmethod
+    def check_parent_connections(cls, kp_dict):
+        hierarchy = {
+            "nose": ["neck"],
+            "neck": ["left_shoulder", "right_shoulder", "mid_hip"],
+            "left_shoulder": ["left_elbow"],
+            "left_elbow": ["left_wrist"],
+            "right_shoulder": ["right_elbow"],
+            "right_elbow": ["right_wrist"],
+            "mid_hip": ["left_hip", "right_hip"],
+            "left_hip": ["left_knee"],
+            "left_knee": ["left_ankle"],
+            "right_hip": ["right_knee"],
+            "right_knee": ["right_ankle"],
+        }
+
+        for parent, children in hierarchy.items():
+            for child in children:
+                if kp_dict[child]["parent"] != parent:
+                    return False
+        return True
+
+    @classmethod
+    def validate_bone_ratios(cls, kp_dict):
+        for (a, b, c), (expected, tolerance) in cls.BONE_RATIOS.items():
+            bone1 = cls.calculate_distance(kp_dict[a], kp_dict[b])
+            bone2 = cls.calculate_distance(kp_dict[b], kp_dict[c])
+
+            if bone1 == 0 or bone2 == 0:
+                continue
+
+            ratio = bone1 / bone2
+            if not (expected - tolerance < ratio < expected + tolerance):
+                return False
+        return True
+
+    @classmethod
+    def validate_joint_angles(cls, kp_dict):
+        angle_checks = {
+            "elbow": [
+                ("left_shoulder", "left_elbow", "left_wrist"),
+                ("right_shoulder", "right_elbow", "right_wrist"),
+            ],
+            "knee": [
+                ("left_hip", "left_knee", "left_ankle"),
+                ("right_hip", "right_knee", "right_ankle"),
+            ],
+            "shoulder": [
+                ("neck", "left_shoulder", "left_elbow"),
+                ("neck", "right_shoulder", "right_elbow"),
+            ],
+            "hip": [
+                ("mid_hip", "left_hip", "left_knee"),
+                ("mid_hip", "right_hip", "right_knee"),
+            ],
+        }
+
+        for joint_type, triples in angle_checks.items():
+            min_angle, max_angle = cls.JOINT_ANGLE_RANGES[joint_type]
+            for a, b, c in triples:
+                angle = cls.calculate_angle(kp_dict[a], kp_dict[b], kp_dict[c])
+                if not (min_angle <= angle <= max_angle):
+                    return False
+        return True
+
+    @classmethod
+    def validate_global_proportions(cls, kp_dict):
+        try:
+            arm_span = cls.calculate_distance(
+                kp_dict["left_wrist"], kp_dict["right_wrist"]
+            )
+            height = cls.calculate_distance(
+                kp_dict["nose"], kp_dict["mid_hip"]
+            ) + cls.calculate_distance(kp_dict["mid_hip"], kp_dict["left_ankle"])
+            return 0.7 < arm_span / height < 1.3
+        except KeyError:
+            return False
+
+    @staticmethod
+    def calculate_distance(a, b):
+        return np.hypot(
+            a["position"][0] - b["position"][0], a["position"][1] - b["position"][1]
+        )
+
+    @staticmethod
+    def calculate_angle(a, b, c):
+        ba = np.array(
+            [a["position"][0] - b["position"][0], a["position"][1] - b["position"][1]]
+        )
+        bc = np.array(
+            [c["position"][0] - b["position"][0], c["position"][1] - b["position"][1]]
+        )
+        cosine_angle = np.dot(ba, bc) / (np.linalg.norm(ba) * np.linalg.norm(bc))
+        return np.degrees(np.arccos(np.clip(cosine_angle, -1, 1)))
+
+
 class Output(BaseModel):
     coco_keypoints: str
     facs: str
@@ -123,13 +253,11 @@ class PersonProcessor:
             max_results=max_people,
         )
         detector = vision.ObjectDetector.create_from_options(options)
-
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=image_np)
         detection_result = detector.detect(mp_image)
 
         boxes = []
         h, w = image_np.shape[:2]
-
         for detection in detection_result.detections:
             bbox = detection.bounding_box
             startX = int(bbox.origin_x)
@@ -137,14 +265,13 @@ class PersonProcessor:
             endX = int(bbox.origin_x + bbox.width)
             endY = int(bbox.origin_y + bbox.height)
 
-            # Expand box by 20%
+            # Expand box by 20% with boundary checks
             width = endX - startX
             height = endY - startY
             startX = max(0, startX - int(0.2 * width))
             startY = max(0, startY - int(0.2 * height))
             endX = min(w, endX + int(0.2 * width))
             endY = min(h, endY + int(0.2 * height))
-
             boxes.append((startX, startY, endX, endY))
 
         return boxes
@@ -165,17 +292,6 @@ class PersonProcessor:
         new_w, new_h = int(w * scale), int(h * scale)
         resized = cv2.resize(crop, (new_w, new_h))
 
-        # Convert to RGB and process
-        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=resized)
-
-        try:
-            face_result = predictor.face_processor.detect(mp_image)
-            pose_result = predictor.pose_processor.process(resized)
-            hand_result = predictor.hand_processor.detect(mp_image)
-        except Exception as e:
-            print(f"Processing error: {e}")
-            return None
-
         # Coordinate mapping functions
         def map_x(x):
             return (x / new_w) * (endX - startX) + startX
@@ -185,6 +301,15 @@ class PersonProcessor:
 
         def map_z(z):
             return z * scale
+
+        try:
+            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=resized)
+            face_result = predictor.face_processor.detect(mp_image)
+            pose_result = predictor.pose_processor.process(resized)
+            hand_result = predictor.hand_processor.detect(mp_image)
+        except Exception as e:
+            print(f"Processing error: {e}")
+            return None
 
         # Process pose landmarks
         mapped_pose = None
@@ -201,9 +326,8 @@ class PersonProcessor:
                 )
 
         # Process face landmarks
-        mapped_face = None
+        mapped_face = []
         if face_result.face_landmarks:
-            mapped_face = []
             for lmk in face_result.face_landmarks[0]:
                 mapped_face.append(
                     Landmark(
@@ -214,7 +338,7 @@ class PersonProcessor:
                 )
 
         # Process hands
-        left_hand, right_hand = None, None
+        left_hand, right_hand = [], []
         if hand_result.hand_landmarks:
             for idx, handedness in enumerate(hand_result.handedness):
                 hand = []
@@ -244,7 +368,7 @@ class PersonProcessor:
 class FullBodyProcessor:
     @staticmethod
     def process_results(pose, face, blendshapes, left_hand, right_hand, image_size):
-        return {
+        result = {
             "coco": FullBodyProcessor.create_coco_output(pose, face, image_size),
             "facs": FullBodyProcessor.create_facs_output(blendshapes),
             "fullbodyfacs": FullBodyProcessor.create_fullbodyfacs(
@@ -252,6 +376,10 @@ class FullBodyProcessor:
             ),
             "hands": FullBodyProcessor.process_hands(left_hand, right_hand),
         }
+        result["valid"] = SkeletalValidator.validate_skeleton(
+            result["fullbodyfacs"]["keypoints"]
+        )
+        return result
 
     @staticmethod
     def create_coco_output(pose, face, image_size):
@@ -318,19 +446,18 @@ class FullBodyProcessor:
                         [3, 5],
                         [4, 6],
                         [5, 7],
-                        # Facial connections
-                        [17, 18],  # brow_inner_left -> brow_inner_right
-                        [18, 0],  # brow_inner_right -> nose
-                        [19, 17],  # brow_outer_left -> brow_inner_left
-                        [20, 18],  # brow_outer_right -> brow_inner_right
-                        [21, 17],  # lid_upper_left -> brow_inner_left
-                        [22, 18],  # lid_upper_right -> brow_inner_right
-                        [23, 21],  # lid_lower_left -> lid_upper_left
-                        [24, 22],  # lid_lower_right -> lid_upper_right
-                        [25, 27],  # lip_upper -> lip_corner_left
-                        [26, 28],  # lip_lower -> lip_corner_right
-                        [27, 25],  # lip_corner_left -> lip_upper
-                        [28, 25],  # lip_corner_right -> lip_upper
+                        [17, 18],
+                        [18, 0],
+                        [19, 17],
+                        [20, 18],
+                        [21, 17],
+                        [22, 18],
+                        [23, 21],
+                        [24, 22],
+                        [25, 27],
+                        [26, 28],
+                        [27, 25],
+                        [28, 25],
                     ],
                 }
             ],
@@ -339,11 +466,6 @@ class FullBodyProcessor:
     @staticmethod
     def create_facs_output(blendshapes):
         au_scores = {}
-        blendshape_dict = {}
-        for bs in blendshapes:
-            if hasattr(bs, "category_name") and hasattr(bs, "score"):
-                blendshape_dict[bs.category_name] = bs.score
-
         FACS_AU_MAPPING = {
             "AU1": ["browInnerUp"],
             "AU2": ["browOuterUpLeft", "browOuterUpRight"],
@@ -353,6 +475,12 @@ class FullBodyProcessor:
             "AU9": ["noseSneerLeft", "noseSneerRight"],
             "AU12": ["mouthSmileLeft", "mouthSmileRight"],
             "AU25": ["jawOpen", "mouthStretch"],
+        }
+
+        blendshape_dict = {
+            bs.category_name: bs.score
+            for bs in blendshapes
+            if hasattr(bs, "category_name") and hasattr(bs, "score")
         }
 
         for au, components in FACS_AU_MAPPING.items():
@@ -375,7 +503,6 @@ class FullBodyProcessor:
         left_shoulder = right_shoulder = None
 
         if pose:
-            # First pass to store shoulder positions
             for idx, lmk in enumerate(pose.landmark):
                 keypoints.append(
                     {
@@ -386,12 +513,11 @@ class FullBodyProcessor:
                     }
                 )
 
-                if idx == 11:  # MediaPipe left shoulder index
+                if idx == 11:
                     left_shoulder = lmk
-                elif idx == 12:  # MediaPipe right shoulder index
+                elif idx == 12:
                     right_shoulder = lmk
 
-            # Add neck keypoint as midpoint between shoulders
             if left_shoulder and right_shoulder:
                 neck_x = (left_shoulder.x + right_shoulder.x) / 2 * width
                 neck_y = (left_shoulder.y + right_shoulder.y) / 2 * height
@@ -401,25 +527,23 @@ class FullBodyProcessor:
                         "id": 33,
                         "name": "neck",
                         "position": [neck_x, neck_y, neck_z],
-                        "parent": 0,  # Connect neck to nose
+                        "parent": 0,
                     }
                 )
 
-        # Adjusted facial map to avoid ID conflicts
         facial_map = {
-            # MediaPipe Face Index : FACS ID
-            151: 34,  # brow_inner_left (17)
-            334: 35,  # brow_inner_right (18)
-            46: 36,  # brow_outer_left (19)
-            276: 37,  # brow_outer_right (20)
-            159: 38,  # lid_upper_left (21)
-            386: 39,  # lid_upper_right (22)
-            145: 40,  # lid_lower_left (23)
-            374: 41,  # lid_lower_right (24)
-            13: 42,  # lip_upper (25)
-            14: 43,  # lip_lower (26)
-            61: 44,  # lip_corner_left (27)
-            291: 45,  # lip_corner_right (28)
+            151: 34,
+            334: 35,
+            46: 36,
+            276: 37,
+            159: 38,
+            386: 39,
+            145: 40,
+            374: 41,
+            13: 42,
+            14: 43,
+            61: 44,
+            291: 45,
         }
 
         if face:
@@ -431,7 +555,7 @@ class FullBodyProcessor:
                             "id": facs_id,
                             "name": COCO_KEYPOINT_NAMES[facs_id - 17],
                             "position": [lmk.x * width, lmk.y * height, lmk.z * width],
-                            "parent": 0,  # Facial features connect to nose
+                            "parent": 0,
                         }
                     )
 
@@ -439,7 +563,6 @@ class FullBodyProcessor:
 
     @staticmethod
     def calculate_bbox(keypoints):
-        """Calculate bounding box from keypoints with visibility > 0"""
         valid = [
             (keypoints[i], keypoints[i + 1])
             for i in range(0, len(keypoints), 3)
@@ -458,24 +581,24 @@ class FullBodyProcessor:
 
     @staticmethod
     def process_hands(left_hand, right_hand):
-        """Process hand landmarks into standardized format"""
-
         def process_single_hand(hand, is_left=True):
-            if not hand:
-                return []
-            return [
-                {
-                    "index": idx,
-                    "x": lmk.x,
-                    "y": lmk.y,
-                    "name": ("left_wrist" if is_left else "right_wrist")
-                    if idx == 0
-                    else (
-                        LEFT_HAND_VRM_MAPPING if is_left else RIGHT_HAND_VRM_MAPPING
-                    ).get(idx, None),
-                }
-                for idx, lmk in enumerate(hand)
-            ]
+            return (
+                [
+                    {
+                        "index": idx,
+                        "x": lmk.x,
+                        "y": lmk.y,
+                        "name": ("left_wrist" if is_left else "right_wrist")
+                        if idx == 0
+                        else (
+                            LEFT_HAND_VRM_MAPPING if is_left else RIGHT_HAND_VRM_MAPPING
+                        ).get(idx),
+                    }
+                    for idx, lmk in enumerate(hand)
+                ]
+                if hand
+                else []
+            )
 
         return {
             "left": process_single_hand(left_hand, True),
@@ -485,42 +608,37 @@ class FullBodyProcessor:
     @staticmethod
     def get_parent(idx):
         return {
-            # Body connections
-            11: 33,  # Left shoulder -> neck
-            12: 33,  # Right shoulder -> neck
-            33: 0,  # Neck -> nose
-            # Original MediaPipe connections
-            13: 11,  # Left elbow -> left shoulder
-            14: 12,  # Right elbow -> right shoulder
-            15: 13,  # Left wrist -> left elbow
-            16: 14,  # Right wrist -> right elbow
-            23: 11,  # Left hip -> left shoulder
-            24: 12,  # Right hip -> right shoulder
-            25: 23,  # Left knee -> left hip
-            26: 24,  # Right knee -> right hip
-            27: 25,  # Left ankle -> left knee
-            28: 26,  # Right ankle -> right knee
-            # Facial connections
-            34: 35,  # brow_inner_left -> brow_inner_right
-            35: 0,  # brow_inner_right -> nose
-            36: 34,  # brow_outer_left -> brow_inner_left
-            37: 35,  # brow_outer_right -> brow_inner_right
-            38: 34,  # lid_upper_left -> brow_inner_left
-            39: 35,  # lid_upper_right -> brow_inner_right
-            40: 38,  # lid_lower_left -> lid_upper_left
-            41: 39,  # lid_lower_right -> lid_upper_right
-            42: 44,  # lip_upper -> lip_corner_left
-            43: 45,  # lip_lower -> lip_corner_right
-            44: 42,  # lip_corner_left -> lip_upper
-            45: 42,  # lip_corner_right -> lip_upper
+            11: 33,
+            12: 33,
+            33: 0,
+            13: 11,
+            14: 12,
+            15: 13,
+            16: 14,
+            23: 11,
+            24: 12,
+            25: 23,
+            26: 24,
+            27: 25,
+            28: 26,
+            34: 35,
+            35: 0,
+            36: 34,
+            37: 35,
+            38: 34,
+            39: 35,
+            40: 38,
+            41: 39,
+            42: 44,
+            43: 45,
+            44: 42,
+            45: 42,
         }.get(idx, -1)
 
 
 class Predictor(BasePredictor):
     def setup(self):
         os.makedirs("thirdparty", exist_ok=True)
-
-        # Download models if missing
         models = [
             (
                 "ssd_mobilenet_v2.tflite",
@@ -542,7 +660,6 @@ class Predictor(BasePredictor):
                 print(f"Downloading {filename}...")
                 urllib.request.urlretrieve(url, path)
 
-        # Initialize processors
         self.face_processor = vision.FaceLandmarker.create_from_options(
             vision.FaceLandmarkerOptions(
                 base_options=python.BaseOptions(
@@ -595,93 +712,96 @@ class Predictor(BasePredictor):
         for person_id, box in enumerate(boxes):
             startX, startY, endX, endY = box
             crop = img_np[startY:endY, startX:endX]
-
             if crop.size == 0:
                 continue
 
             person_result = PersonProcessor.process_crop(
                 crop, box, (original_h, original_w), self
             )
-
             if person_result:
                 person_result["person_id"] = person_id
                 person_result["box"] = box
                 all_results.append(person_result)
 
+        validated_results = []
+        for result in all_results:
+            if result.get("valid", False):
+                validated_results.append(result)
+            else:
+                validated_results.append(self.create_fallback_result(result))
+
         return Output(
             coco_keypoints=json.dumps(
-                self.aggregate_coco(all_results, original_w, original_h), indent=2
+                self.aggregate_coco(validated_results, original_w, original_h), indent=2
             ),
-            facs=json.dumps({"people": [r["facs"] for r in all_results]}, indent=2),
+            facs=json.dumps(
+                {"people": [r["facs"] for r in validated_results]}, indent=2
+            ),
             fullbodyfacs=json.dumps(
-                {"people": [r["fullbodyfacs"] for r in all_results]}, indent=2
+                {"people": [r["fullbodyfacs"] for r in validated_results]}, indent=2
             ),
-            debug_image=self.create_debug_image(img_np, all_results),
-            hand_landmarks=json.dumps([r["hands"] for r in all_results])
-            if any(r["hands"] for r in all_results)
+            debug_image=self.create_debug_image(img_np, validated_results),
+            hand_landmarks=json.dumps([r["hands"] for r in validated_results])
+            if any(r["hands"] for r in validated_results)
             else None,
-            num_people=len(all_results),
+            num_people=len(validated_results),
         )
 
-    def create_debug_image(self, img_np: np.ndarray, all_results: list) -> Path:
+    def create_fallback_result(self, original_result):
+        return {
+            "coco": original_result["coco"],
+            "facs": {"AUs": {}, "blendshapes": []},
+            "fullbodyfacs": {
+                "keypoints": [
+                    kp
+                    for kp in original_result["fullbodyfacs"]["keypoints"]
+                    if kp["name"]
+                    in [
+                        "nose",
+                        "left_shoulder",
+                        "right_shoulder",
+                        "left_hip",
+                        "right_hip",
+                        "mid_hip",
+                    ]
+                ]
+            },
+            "hands": {"left": [], "right": []},
+            "valid": False,
+            "box": original_result["box"],  # Add missing box information
+            "person_id": original_result["person_id"],  # Add person_id
+        }
+
+    def create_debug_image(self, img_np: np.ndarray, results: list) -> Path:
         annotated = Image.fromarray(img_np)
         draw = ImageDraw.Draw(annotated)
-
-        colors = {
-            "green": (0, 255, 0),
-            "blue": (255, 0, 0),
-            "red": (0, 0, 255),
-            "orange": (255, 165, 0),
-            "yellow": (255, 255, 0),
-            "magenta": (255, 0, 255),
-        }
+        colors = {"valid": (0, 255, 0), "invalid": (255, 0, 0)}
 
         try:
             font = ImageFont.truetype("arial.ttf", 15)
         except:
             font = ImageFont.load_default()
 
-        for result in all_results:
-            # Draw bounding box
-            startX, startY, endX, endY = result["box"]
-            draw.rectangle(
-                [(startX, startY), (endX, endY)], outline=colors["green"], width=2
-            )
+        for result in results:
+            box = result["box"]
+            color = colors["valid"] if result.get("valid", False) else colors["invalid"]
 
-            # Draw keypoints and skeleton
-            keypoints = result["fullbodyfacs"]["keypoints"]
-            self.draw_skeleton(draw, keypoints, colors)
+            # Draw bounding box
+            draw.rectangle([(box[0], box[1]), (box[2], box[3])], outline=color, width=2)
+
+            # Draw keypoints
+            for kp in result["fullbodyfacs"]["keypoints"]:
+                x, y = kp["position"][0], kp["position"][1]
+                bbox = [(x - 4, y - 4), (x + 4, y + 4)]
+                draw.ellipse(bbox, fill=color, outline=None)
 
             # Draw person ID
             label = f"Person {result['person_id']}"
-            draw.text((startX, startY - 20), label, fill=colors["green"], font=font)
+            draw.text((box[0], box[1] - 20), label, fill=color, font=font)
 
         debug_path = "/tmp/debug_output.jpg"
         annotated.save(debug_path)
         return Path(debug_path)
-
-    def draw_skeleton(self, draw, keypoints, colors):
-        # Convert keypoints to dict for easy lookup
-        kp_dict = {kp["id"]: kp for kp in keypoints}
-
-        # Define connections based on parent relationships
-        connections = []
-        for kp in keypoints:
-            if kp["parent"] != -1 and kp["parent"] in kp_dict:
-                connections.append((kp_dict[kp["parent"]], kp))
-
-        # Draw connections
-        for parent, child in connections:
-            x1, y1 = parent["position"][0], parent["position"][1]
-            x2, y2 = child["position"][0], child["position"][1]
-            draw.line([(x1, y1), (x2, y2)], fill=colors["orange"], width=2)
-
-        # Draw keypoints
-        for kp in keypoints:
-            x, y = kp["position"][0], kp["position"][1]
-            bbox = [(x - 4, y - 4), (x + 4, y + 4)]
-            color = colors["blue"] if kp["id"] < 33 else colors["red"]
-            draw.ellipse(bbox, fill=color, outline=None)
 
     def aggregate_coco(self, results, width, height):
         annotations = []
