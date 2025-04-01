@@ -633,7 +633,7 @@ class Predictor(BasePredictor):
         ),
     ) -> Output:
         media_type = "image"
-        if str(media_path).lower().endswith((".mp4", ".avi", ".mov", ".mkv")):
+        if str(media_path).lower().endswith((".mp4", ".avi", ".mov", ".mkv", ".webm")):
             media_type = "video"
             return self.process_video(media_path, max_people, frame_sample_rate)
         else:
