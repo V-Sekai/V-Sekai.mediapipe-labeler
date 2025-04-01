@@ -375,7 +375,6 @@ class FullBodyProcessor:
         left_shoulder = right_shoulder = None
 
         if pose:
-            # First pass to store shoulder positions
             for idx, lmk in enumerate(pose.landmark):
                 keypoints.append(
                     {
@@ -383,15 +382,15 @@ class FullBodyProcessor:
                         "name": f"body_{idx}",
                         "position": [lmk.x * width, lmk.y * height, lmk.z * width],
                         "parent": FullBodyProcessor.get_parent(idx),
+                        "visibility": lmk.visibility,  # Added visibility
                     }
                 )
 
-                if idx == 11:  # MediaPipe left shoulder index
+                if idx == 11:
                     left_shoulder = lmk
-                elif idx == 12:  # MediaPipe right shoulder index
+                elif idx == 12:
                     right_shoulder = lmk
 
-            # Add neck keypoint as midpoint between shoulders
             if left_shoulder and right_shoulder:
                 neck_x = (left_shoulder.x + right_shoulder.x) / 2 * width
                 neck_y = (left_shoulder.y + right_shoulder.y) / 2 * height
@@ -401,25 +400,26 @@ class FullBodyProcessor:
                         "id": 33,
                         "name": "neck",
                         "position": [neck_x, neck_y, neck_z],
-                        "parent": 0,  # Connect neck to nose
+                        "parent": 0,
+                        "visibility": min(
+                            left_shoulder.visibility, right_shoulder.visibility
+                        ),  # Use min visibility
                     }
                 )
 
-        # Adjusted facial map to avoid ID conflicts
         facial_map = {
-            # MediaPipe Face Index : FACS ID
-            151: 34,  # brow_inner_left (17)
-            334: 35,  # brow_inner_right (18)
-            46: 36,  # brow_outer_left (19)
-            276: 37,  # brow_outer_right (20)
-            159: 38,  # lid_upper_left (21)
-            386: 39,  # lid_upper_right (22)
-            145: 40,  # lid_lower_left (23)
-            374: 41,  # lid_lower_right (24)
-            13: 42,  # lip_upper (25)
-            14: 43,  # lip_lower (26)
-            61: 44,  # lip_corner_left (27)
-            291: 45,  # lip_corner_right (28)
+            151: 34,
+            46: 36,
+            159: 38,
+            13: 42,
+            334: 35,
+            276: 37,
+            386: 39,
+            14: 43,
+            145: 40,
+            374: 41,
+            61: 44,
+            291: 45,
         }
 
         if face:
@@ -431,7 +431,8 @@ class FullBodyProcessor:
                             "id": facs_id,
                             "name": COCO_KEYPOINT_NAMES[facs_id - 17],
                             "position": [lmk.x * width, lmk.y * height, lmk.z * width],
-                            "parent": 0,  # Facial features connect to nose
+                            "parent": 0,
+                            "visibility": 1.0,  # Assume facial points are visible
                         }
                     )
 
@@ -661,22 +662,23 @@ class Predictor(BasePredictor):
         return Path(debug_path)
 
     def draw_skeleton(self, draw, keypoints, colors):
-        # Convert keypoints to dict for easy lookup
         kp_dict = {kp["id"]: kp for kp in keypoints}
-
-        # Define connections based on parent relationships
         connections = []
         for kp in keypoints:
-            if kp["parent"] != -1 and kp["parent"] in kp_dict:
-                connections.append((kp_dict[kp["parent"]], kp))
+            parent_id = kp.get("parent", -1)
+            if parent_id != -1 and parent_id in kp_dict:
+                parent = kp_dict[parent_id]
+                connections.append((parent, kp))
 
-        # Draw connections
         for parent, child in connections:
+            parent_vis = parent.get("visibility", 1.0)
+            child_vis = child.get("visibility", 1.0)
+            if parent_vis < 0.5 or child_vis < 0.5:
+                continue  # Skip low-confidence connections
             x1, y1 = parent["position"][0], parent["position"][1]
             x2, y2 = child["position"][0], child["position"][1]
             draw.line([(x1, y1), (x2, y2)], fill=colors["orange"], width=2)
 
-        # Draw keypoints
         for kp in keypoints:
             x, y = kp["position"][0], kp["position"][1]
             bbox = [(x - 4, y - 4), (x + 4, y + 4)]
