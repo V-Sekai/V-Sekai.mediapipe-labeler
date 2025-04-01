@@ -279,6 +279,13 @@ class FullBodyProcessor:
                 else:
                     keypoints += [0.0, 0.0, 0]
 
+        # Adjust the nose position to be closer to the spine
+        if pose and len(pose.landmark) > 0:
+            nose_x = pose.landmark[0].x * width
+            neck_x = (pose.landmark[11].x + pose.landmark[12].x) / 2 * width
+            keypoints[0] = (nose_x + neck_x) / 2
+            keypoints[1] = pose.landmark[0].y * height
+
         return {
             "annotations": [
                 {
