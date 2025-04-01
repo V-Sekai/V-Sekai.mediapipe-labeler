@@ -239,10 +239,15 @@ class PersonProcessor:
                 else:
                     right_hand = hand
 
+        # Get blendshapes or empty list if none
+        blendshapes = []
+        if face_result.face_blendshapes:
+            blendshapes = face_result.face_blendshapes[0]
+
         return FullBodyProcessor.process_results(
             mapped_pose,
             mapped_face,
-            face_result.face_blendshapes[0] if face_result.face_blendshapes else [],
+            blendshapes,
             left_hand,
             right_hand,
             original_size,
