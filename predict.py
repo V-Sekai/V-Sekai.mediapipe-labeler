@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+ 
 import cv2
 from tqdm import tqdm
 import json
@@ -19,6 +20,7 @@ from PIL import ImageDraw, ImageFont
 import math
 import numpy as np
 import os
+os.environ['GLOG_minloglevel'] = '2' 
 import sys
 import urllib.request
 import mediapipe as mp
