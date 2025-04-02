@@ -567,7 +567,7 @@ class Predictor(BasePredictor):
 
         # Initialize pose and hand processors
         self.pose_processor = mp.solutions.pose.Pose(
-            static_image_mode=False,
+            static_image_mode=True,
             model_complexity=2,
             min_detection_confidence=0.3,
         )
