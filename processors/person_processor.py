@@ -1,0 +1,154 @@
+import numpy as np
+import cv2
+from typing import List, Tuple, Any
+import mediapipe as mp
+from mediapipe.framework.formats import landmark_pb2
+from mediapipe.tasks.python import vision
+from mediapipe.tasks import python
+from mediapipe.tasks.python.components.containers import Landmark
+
+from .full_body_processor import FullBodyProcessor
+
+
+class PersonProcessor:
+    @staticmethod
+    def detect_people(
+        image_np: np.ndarray, max_people: int
+    ) -> List[Tuple[int, int, int, int]]:
+        base_options = python.BaseOptions(
+            model_asset_path="thirdparty/ssd_mobilenet_v2.tflite",
+            delegate=python.BaseOptions.Delegate.CPU,
+        )
+        options = vision.ObjectDetectorOptions(
+            base_options=base_options,
+            score_threshold=0.4,
+            category_allowlist=["person"],
+            max_results=max_people,
+        )
+        detector = vision.ObjectDetector.create_from_options(options)
+
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=image_np)
+        detection_result = detector.detect(mp_image)
+
+        boxes = []
+        h, w = image_np.shape[:2]
+
+        for detection in detection_result.detections:
+            bbox = detection.bounding_box
+            startX = int(bbox.origin_x)
+            startY = int(bbox.origin_y)
+            endX = int(bbox.origin_x + bbox.width)
+            endY = int(bbox.origin_y + bbox.height)
+
+            # Expand box by 20%
+            width = endX - startX
+            height = endY - startY
+            startX = max(0, startX - int(0.2 * width))
+            startY = max(0, startY - int(0.2 * height))
+            endX = min(w, endX + int(0.2 * width))
+            endY = min(h, endY + int(0.2 * height))
+
+            boxes.append((startX, startY, endX, endY))
+
+        return boxes
+
+    @staticmethod
+    def process_crop(
+        crop: np.ndarray,
+        box: Tuple[int, int, int, int],
+        original_size: Tuple[int, int],
+        predictor: Any,
+    ):
+        (startX, startY, endX, endY) = box
+        orig_h, orig_w = original_size
+
+        # Maintain aspect ratio
+        h, w = crop.shape[:2]
+        scale = 640 / max(w, h)
+        new_w, new_h = int(w * scale), int(h * scale)
+        resized = cv2.resize(crop, (new_w, new_h))
+
+        # Convert to RGB and process
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=resized)
+
+        try:
+            face_result = predictor.face_processor.detect(mp_image)
+            pose_result = predictor.pose_processor.process(resized)
+            hand_result = predictor.hand_processor.detect(mp_image)
+        except Exception as e:
+            print(f"Processing error: {e}")
+            return None
+
+        # Coordinate mapping functions
+        def map_x(x):
+            return (x / new_w) * (endX - startX) + startX
+
+        def map_y(y):
+            return (y / new_h) * (endY - startY) + startY
+
+        def map_z(z):
+            return z * scale
+
+        # Process pose landmarks with visibility filtering
+        mapped_pose = None
+        if pose_result.pose_landmarks:
+            mapped_pose = landmark_pb2.NormalizedLandmarkList()
+            for lmk in pose_result.pose_landmarks.landmark:
+                if lmk.visibility < 0.1:  # Filter low-visibility keypoints
+                    mapped_pose.landmark.append(
+                        landmark_pb2.NormalizedLandmark(x=0, y=0, z=0, visibility=0)
+                    )
+                else:
+                    mapped_pose.landmark.append(
+                        landmark_pb2.NormalizedLandmark(
+                            x=map_x(lmk.x * new_w) / orig_w,
+                            y=map_y(lmk.y * new_h) / orig_h,
+                            z=map_z(lmk.z),
+                            visibility=lmk.visibility,
+                        )
+                    )
+
+        # Process face landmarks with improved alignment
+        mapped_face = None
+        if face_result.face_landmarks:
+            mapped_face = []
+            for lmk in face_result.face_landmarks[0]:
+                mapped_face.append(
+                    Landmark(
+                        x=map_x(lmk.x * new_w) / orig_w,
+                        y=map_y(lmk.y * new_h) / orig_h,
+                        z=map_z(lmk.z),
+                    )
+                )
+
+        # Process hands
+        left_hand, right_hand = None, None
+        if hand_result.hand_landmarks:
+            for idx, handedness in enumerate(hand_result.handedness):
+                hand = []
+                for lmk in hand_result.hand_landmarks[idx]:
+                    hand.append(
+                        Landmark(
+                            x=map_x(lmk.x * new_w) / orig_w,
+                            y=map_y(lmk.y * new_h) / orig_h,
+                            z=map_z(lmk.z),
+                        )
+                    )
+                if handedness[0].display_name == "Left":
+                    left_hand = hand
+                else:
+                    right_hand = hand
+
+        # Get blendshapes or empty list if none
+        blendshapes = []
+        if face_result.face_blendshapes:
+            blendshapes = face_result.face_blendshapes[0]
+
+        return FullBodyProcessor.process_results(
+            mapped_pose,
+            mapped_face,
+            blendshapes,
+            left_hand,
+            right_hand,
+            original_size,
+        )

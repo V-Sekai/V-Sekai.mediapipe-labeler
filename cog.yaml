@@ -11,4 +11,4 @@ build:
     - "natsort"
     - "pillow"
     - "tqdm"
-predict: "predict.py:Predictor"
+predict: "main.py:Predictor"
