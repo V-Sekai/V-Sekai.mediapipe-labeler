@@ -192,7 +192,7 @@ RIGHT_HAND_VRM_MAPPING = {
 
 class Output(BaseModel):
     mediapipe_keypoints: str
-    facs: str
+    blendshapes: str
     fullbody_data: str
     debug_media: Path
     hand_landmarks: Optional[str]
@@ -349,15 +349,6 @@ class FullBodyProcessor:
         [30, 32],
         [27, 29],
         [29, 31],
-        [33, 34],
-        [34, 35],
-        [35, 33],
-        [36, 37],
-        [37, 38],
-        [38, 36],
-        [39, 40],
-        [40, 41],
-        [41, 39],
     ]
 
     @staticmethod
@@ -366,7 +357,7 @@ class FullBodyProcessor:
             "mediapipe": FullBodyProcessor.create_mediapipe_output(
                 pose, face, image_size
             ),
-            "facs": FullBodyProcessor.create_facs_output(blendshapes),
+            "blendshapes": FullBodyProcessor.create_blendshapes_output(blendshapes),
             "fullbody": FullBodyProcessor.create_fullbody_output(
                 pose, face, image_size
             ),
@@ -430,36 +421,12 @@ class FullBodyProcessor:
         }
 
     @staticmethod
-    def create_facs_output(blendshapes):
-        au_scores = {}
-        blendshape_dict = {}
-        for bs in blendshapes:
-            if hasattr(bs, "category_name") and hasattr(bs, "score"):
-                blendshape_dict[bs.category_name] = bs.score
-
-        FACS_AU_MAPPING = {
-            "AU1": ["browInnerUp"],
-            "AU2": ["browOuterUpLeft", "browOuterUpRight"],
-            "AU4": ["browDownLeft", "browDownRight"],
-            "AU5": ["eyeBlinkLeft", "eyeBlinkRight"],
-            "AU6": ["eyeSquintLeft", "eyeSquintRight"],
-            "AU9": ["noseSneerLeft", "noseSneerRight"],
-            "AU12": ["mouthSmileLeft", "mouthSmileRight"],
-            "AU25": ["jawOpen", "mouthStretch"],
-        }
-
-        for au, components in FACS_AU_MAPPING.items():
-            scores = [blendshape_dict.get(name, 0.0) for name in components]
-            au_scores[au] = sum(scores) / len(scores) if scores else 0.0
-
-        return {
-            "AUs": au_scores,
-            "blendshapes": [
-                {"name": bs.category_name, "score": float(bs.score)}
-                for bs in blendshapes
-                if hasattr(bs, "category_name") and hasattr(bs, "score")
-            ],
-        }
+    def create_blendshapes_output(blendshapes):
+        return [
+            {"name": bs.category_name, "score": float(bs.score)}
+            for bs in blendshapes
+            if hasattr(bs, "category_name") and hasattr(bs, "score")
+        ]
 
     @staticmethod
     def create_fullbody_output(pose, face, image_size):
@@ -500,7 +467,7 @@ class FullBodyProcessor:
                             "id": body_id,
                             "name": MEDIAPIPE_KEYPOINT_NAMES[body_id],
                             "position": [lmk.x * width, lmk.y * height, lmk.z * width],
-                            "visibility": 1.0,
+                            "visibility": 0.0,
                         }
                     )
 
@@ -660,7 +627,9 @@ class Predictor(BasePredictor):
             mediapipe_keypoints=json.dumps(
                 self.aggregate_mediapipe(all_results, original_w, original_h), indent=2
             ),
-            facs=json.dumps({"people": [r["facs"] for r in all_results]}, indent=2),
+            blendshapes=json.dumps(
+                {"people": [r["blendshapes"] for r in all_results]}, indent=2
+            ),
             fullbody_data=json.dumps(
                 {"people": [r["fullbody"] for r in all_results]}, indent=2
             ),
@@ -745,7 +714,7 @@ class Predictor(BasePredictor):
             frame_results.append(
                 {
                     "mediapipe": self.aggregate_mediapipe(all_results, width, height),
-                    "facs": [r["facs"] for r in all_results],
+                    "blendshapes": [r["blendshapes"] for r in all_results],
                     "fullbody": [r["fullbody"] for r in all_results],
                     "hands": [r["hands"] for r in all_results],
                     "num_people": len(all_results),
@@ -764,8 +733,9 @@ class Predictor(BasePredictor):
             mediapipe_keypoints=json.dumps(
                 [f["mediapipe"] for f in frame_results], indent=2
             ),
-            facs=json.dumps(
-                {"frames": [{"people": f["facs"]} for f in frame_results]}, indent=2
+            blendshapes=json.dumps(
+                {"frames": [{"people": f["blendshapes"]} for f in frame_results]},
+                indent=2,
             ),
             fullbody_data=json.dumps(
                 {"frames": [{"people": f["fullbody"]} for f in frame_results]}, indent=2
@@ -821,7 +791,7 @@ class Predictor(BasePredictor):
                 draw.line([(x1, y1), (x2, y2)], fill=colors["orange"], width=2)
 
         for kp in keypoints:
-            if kp["visibility"] < 0.5:
+            if kp["visibility"] < 0.5 or kp["id"] > 32:
                 continue
             x, y = kp["position"][0], kp["position"][1]
             bbox = [(x - 4, y - 4), (x + 4, y + 4)]
