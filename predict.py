@@ -704,7 +704,9 @@ class Predictor(BasePredictor):
         fps = cap.get(cv2.CAP_PROP_FPS)
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
-        debug_video_path = "/tmp/debug_output.mp4"
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
+            debug_video_path = tmp.name
+
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         out = cv2.VideoWriter(
             debug_video_path, fourcc, fps / frame_sample_rate, (width, height)
@@ -776,17 +778,22 @@ class Predictor(BasePredictor):
         # Add audio to the debug video
         original_video = VideoFileClip(str(video_path))
         debug_video = VideoFileClip(debug_video_path)
-        final_video = debug_video.with_audio(original_video.audio)
-        final_video.write_videofile("/tmp/debug_output_with_audio.mp4")
+        final_video_with_audio = debug_video.with_audio(original_video.audio)
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp_final:
+            debug_with_audio_path = tmp_final.name
+        final_video_with_audio.write_videofile(debug_with_audio_path)
 
         # Convert the video to a widely supported format
         import subprocess
+
+        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp_final_conv:
+            final_video_path = tmp_final_conv.name
 
         subprocess.run(
             [
                 "ffmpeg",
                 "-i",
-                "/tmp/debug_output_with_audio.mp4",
+                debug_with_audio_path,
                 "-c:v",
                 "libx264",
                 "-crf",
@@ -795,8 +802,9 @@ class Predictor(BasePredictor):
                 "aac",
                 "-b:a",
                 "128k",
-                "/tmp/debug_output_final.mp4",
-            ]
+                final_video_path,
+            ],
+            check=True,
         )
 
         with tempfile.NamedTemporaryFile(suffix=".json", delete=False, mode="w") as tmp:
@@ -819,7 +827,7 @@ class Predictor(BasePredictor):
             mediapipe_keypoints=mediapipe_keypoints_path,
             blendshapes=mediapipe_keypoints_path,
             fullbody_data=mediapipe_keypoints_path,
-            debug_media=Path("/tmp/debug_output_final.mp4"),
+            debug_media=Path(final_video_path),
             hand_landmarks=mediapipe_keypoints_path,
             num_people=max(f["num_people"] for f in frame_results),
             media_type="video",
