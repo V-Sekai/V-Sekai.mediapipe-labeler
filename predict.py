@@ -792,6 +792,7 @@ class Predictor(BasePredictor):
         subprocess.run(
             [
                 "ffmpeg",
+                "-y",
                 "-i",
                 debug_with_audio_path,
                 "-c:v",
