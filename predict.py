@@ -82,7 +82,7 @@ class Predictor(BasePredictor):
         self.filters = [(OneEuroFilter(), OneEuroFilter()) for _ in COCO_KEYPOINT_NAMES]
 
     def predict(self, media_path: Path, frame_sample: int = 1) -> Output:
-        if media_path.suffix.lower() in (".mp4", ".avi", ".mov"):
+        if media_path.suffix.lower() in (".mp4", ".avi", ".mov", ".mkv", ".mpv"):
             return self.process_video(media_path, frame_sample)
         return self.process_image(media_path)
 
@@ -115,10 +115,8 @@ class Predictor(BasePredictor):
             if not ret or frame_idx % frame_sample != 0:
                 continue
 
-            results = self.detect_poses(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-            debug_video.write(
-                cv2.cvtColor(self.debug_image(frame, results), cv2.COLOR_RGB2BGR)
-            )
+            results = self.detect_poses(frame)
+            debug_video.write(self.debug_image(frame, results))
             frame_results.append(results)
 
         cap.release()
