@@ -4,9 +4,3 @@ __pycache__/
 *.jpg_blendshapes.json
 
 .cog/
-
-*.mp4
-
-output.json
-
-debug_output.png

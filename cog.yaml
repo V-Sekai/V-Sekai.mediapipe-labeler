@@ -10,5 +10,5 @@ build:
     - "matplotlib"
     - "natsort"
     - "pillow"
-    - "tqdm"
+
 predict: "predict.py:Predictor"
