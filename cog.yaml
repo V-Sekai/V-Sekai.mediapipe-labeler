@@ -11,5 +11,6 @@ build:
     - "natsort"
     - "pillow"
     - "tqdm"
+    - "moviepy"
 
 predict: "predict.py:Predictor"
