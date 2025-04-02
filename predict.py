@@ -215,9 +215,6 @@ class PersonProcessor:
                 mp.Image(image_format=mp.ImageFormat.SRGB, data=resized)
             )
             pose_result = predictor.pose_processor.process(resized)
-            hand_result = predictor.hand_processor.detect(
-                mp.Image(image_format=mp.ImageFormat.SRGB, data=resized)
-            )
         except Exception as e:
             print(f"Processing error: {e}")
             return None
@@ -258,32 +255,13 @@ class PersonProcessor:
                         }
                     )
 
+        # Remove hand inference by setting empty lists for hands.
         left_hand, right_hand = [], []
-        if hand_result.hand_landmarks:
-            for idx, handedness in enumerate(hand_result.handedness):
-                hand = [
-                    {
-                        "x": float(map_x(lmk.x * new_w) / orig_w),
-                        "y": float(map_y(lmk.y * new_h) / orig_h),
-                        "z": float(map_z(lmk.z)),
-                    }
-                    for lmk in hand_result.hand_landmarks[idx]
-                ]
-                if handedness[0].display_name == "Left":
-                    left_hand = hand
-                else:
-                    right_hand = hand
 
         return {
             "coco": FullBodyProcessor.create_coco_output(
                 mapped_pose, mapped_face, left_hand, right_hand, original_size
-            ),
-            "blendshapes": [
-                {"name": bs.category_name, "score": float(bs.score)}
-                for bs in face_result.face_blendshapes[0]
-            ]
-            if face_result.face_blendshapes
-            else [],
+            )
         }
 
 
@@ -315,21 +293,9 @@ class FullBodyProcessor:
             keypoints[idx*3+2] = 2
             num_visible += 1
 
-        # Process left hand (indices 29-49)
-        for i, lmk in enumerate(left_hand[:21]):  # Ensure max 21 points
-            idx = 29 + i
-            keypoints[idx*3] = lmk["x"] * width
-            keypoints[idx*3+1] = lmk["y"] * height
-            keypoints[idx*3+2] = 2
-            num_visible += 1
+        # Leave left hand (indices 29-49) as zeros
 
-        # Process right hand (indices 50-70)
-        for i, lmk in enumerate(right_hand[:21]):  # Ensure max 21 points
-            idx = 50 + i
-            keypoints[idx*3] = lmk["x"] * width
-            keypoints[idx*3+1] = lmk["y"] * height
-            keypoints[idx*3+2] = 2
-            num_visible += 1
+        # Leave right hand (indices 50-70) as zeros
 
         keypoint_objects = []
         for idx in range(num_keypoints):
@@ -391,10 +357,6 @@ class Predictor(BasePredictor):
                 "face_landmarker.task",
                 "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
             ),
-            (
-                "hand_landmarker.task",
-                "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
-            ),
         ]
 
         for filename, url in models:
@@ -407,7 +369,7 @@ class Predictor(BasePredictor):
                 base_options=python.BaseOptions(
                     model_asset_path="thirdparty/face_landmarker.task"
                 ),
-                output_face_blendshapes=True,
+                output_face_blendshapes=False,
                 num_faces=1,
                 min_face_detection_confidence=0.5,
             )
@@ -417,15 +379,7 @@ class Predictor(BasePredictor):
             static_image_mode=True, model_complexity=2, min_detection_confidence=0.5
         )
 
-        self.hand_processor = vision.HandLandmarker.create_from_options(
-            vision.HandLandmarkerOptions(
-                base_options=python.BaseOptions(
-                    model_asset_path="thirdparty/hand_landmarker.task"
-                ),
-                num_hands=2,
-            )
-        )
-
+        # Removed hand processor since hand inference is not required.
         self.filters = [OneEuroFilter() for _ in COCO_KEYPOINT_NAMES]
 
     def predict(
@@ -443,11 +397,12 @@ class Predictor(BasePredictor):
 
     def process_image(self, image_path: Path, max_people: int) -> Output:
         img = np.array(Image.open(image_path).convert("RGB"))
+        img = resize_and_pad(img)  # Resize and pad to 640x640
         h, w = img.shape[:2]
         results = []
 
         for box in PersonProcessor.detect_people(img, max_people):
-            crop = img[box[1] : box[3], box[0] : box[2]]
+            crop = img[box[1]:box[3], box[0]:box[2]]
             if crop.size == 0:
                 continue
             result = PersonProcessor.process_crop(crop, box, (h, w), self)
@@ -456,7 +411,7 @@ class Predictor(BasePredictor):
 
         return Output(
             coco_keypoints=json.dumps(self.aggregate_coco(results, w, h)),
-            blendshapes=json.dumps({"people": [r["blendshapes"] for r in results]}),
+            blendshapes=json.dumps({"people": []}),
             debug_media=self.create_debug_image(img, results),
             num_people=len(results),
             media_type="image",
@@ -470,15 +425,12 @@ class Predictor(BasePredictor):
         max_processing_seconds: int,
     ) -> Output:
         cap = cv2.VideoCapture(str(video_path))
-        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-
         debug_video = cv2.VideoWriter(
             "/tmp/debug.mp4",
             cv2.VideoWriter_fourcc(*"mp4v"),
             cap.get(cv2.CAP_PROP_FPS) / frame_sample_rate,
-            (width, height),
+            (640, 640),  # Set output size to 640x640
         )
 
         frame_results = []
@@ -498,28 +450,27 @@ class Predictor(BasePredictor):
                 break
 
             if frame_count % frame_sample_rate == 0:
-                results = []
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                frame_rgb = resize_and_pad(frame_rgb)  # Resize and pad to 640x640
+                h, w = frame_rgb.shape[:2]
+
+                results = []
                 for box in PersonProcessor.detect_people(frame_rgb, max_people):
-                    crop = frame_rgb[box[1] : box[3], box[0] : box[2]]
-                    result = PersonProcessor.process_crop(
-                        crop, box, (height, width), self
-                    )
+                    crop = frame_rgb[box[1]:box[3], box[0]:box[2]]
+                    result = PersonProcessor.process_crop(crop, box, (h, w), self)
                     if result:
                         results.append(result)
 
                 max_people_count = max(max_people_count, len(results))
                 frame_results.append(
                     {
-                        "coco": self.aggregate_coco(results, width, height),
-                        "blendshapes": [r["blendshapes"] for r in results],
+                        "coco": self.aggregate_coco(results, w, h),
+                        "blendshapes": [],
                     }
                 )
 
                 debug_frame = self.annotate_frame(frame_rgb, results)
-                debug_video.write(
-                    cv2.cvtColor(np.array(debug_frame), cv2.COLOR_RGB2BGR)
-                )
+                debug_video.write(cv2.cvtColor(np.array(debug_frame), cv2.COLOR_RGB2BGR))
 
             frame_count += 1
             progress.update(1)
@@ -531,7 +482,7 @@ class Predictor(BasePredictor):
         return Output(
             coco_keypoints=json.dumps([f["coco"] for f in frame_results]),
             blendshapes=json.dumps(
-                {"frames": [{"people": f["blendshapes"]} for f in frame_results]}
+                {"frames": [{"people": []} for f in frame_results]}
             ),
             debug_media=Path("/tmp/debug.mp4"),
             num_people=max_people_count,
@@ -608,3 +559,24 @@ class Predictor(BasePredictor):
                 }
             ],
         }
+
+
+def resize_and_pad(image: np.ndarray, target_size: Tuple[int, int] = (640, 640)) -> np.ndarray:
+    h, w = image.shape[:2]
+    scale = min(target_size[0] / w, target_size[1] / h)
+    new_w, new_h = int(w * scale), int(h * scale)
+    resized = cv2.resize(image, (new_w, new_h))
+
+    pad_w = (target_size[0] - new_w) // 2
+    pad_h = (target_size[1] - new_h) // 2
+
+    padded = cv2.copyMakeBorder(
+        resized,
+        pad_h,
+        target_size[1] - new_h - pad_h,
+        pad_w,
+        target_size[0] - new_w - pad_w,
+        cv2.BORDER_CONSTANT,
+        value=(0, 0, 0),
+    )
+    return padded
