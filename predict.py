@@ -180,7 +180,7 @@ RIGHT_HAND_VRM_MAPPING = {
 
 class Output(BaseModel):
     coco_keypoints: str
-    facs: str
+    blendshapes: str
     fullbodyfacs: str
     debug_media: Path
     hand_landmarks: Optional[str]
@@ -338,13 +338,21 @@ class FullBodyProcessor:
     def process_results(pose, face, blendshapes, left_hand, right_hand, image_size):
         return {
             "coco": FullBodyProcessor.create_coco_output(pose, face, image_size),
-            "facs": FullBodyProcessor.create_facs_output(blendshapes),
+            "blendshapes": FullBodyProcessor.create_blendshapes_output(blendshapes),
             "fullbodyfacs": FullBodyProcessor.create_fullbodyfacs(
                 pose, face, image_size
             ),
             "hands": FullBodyProcessor.process_hands(left_hand, right_hand),
         }
 
+    @staticmethod
+    def create_blendshapes_output(blendshapes):
+        return [
+            {"name": bs.category_name, "score": float(bs.score)}
+            for bs in blendshapes
+            if hasattr(bs, "category_name") and hasattr(bs, "score")
+        ]
+        
     @staticmethod
     def create_coco_output(pose, face, image_size):
         height, width = image_size
@@ -459,38 +467,6 @@ class FullBodyProcessor:
                         [28, 25],
                     ],
                 }
-            ],
-        }
-
-    @staticmethod
-    def create_facs_output(blendshapes):
-        au_scores = {}
-        blendshape_dict = {}
-        for bs in blendshapes:
-            if hasattr(bs, "category_name") and hasattr(bs, "score"):
-                blendshape_dict[bs.category_name] = bs.score
-
-        FACS_AU_MAPPING = {
-            "AU1": ["browInnerUp"],
-            "AU2": ["browOuterUpLeft", "browOuterUpRight"],
-            "AU4": ["browDownLeft", "browDownRight"],
-            "AU5": ["eyeBlinkLeft", "eyeBlinkRight"],
-            "AU6": ["eyeSquintLeft", "eyeSquintRight"],
-            "AU9": ["noseSneerLeft", "noseSneerRight"],
-            "AU12": ["mouthSmileLeft", "mouthSmileRight"],
-            "AU25": ["jawOpen", "mouthStretch"],
-        }
-
-        for au, components in FACS_AU_MAPPING.items():
-            scores = [blendshape_dict.get(name, 0.0) for name in components]
-            au_scores[au] = sum(scores) / len(scores) if scores else 0.0
-
-        return {
-            "AUs": au_scores,
-            "blendshapes": [
-                {"name": bs.category_name, "score": float(bs.score)}
-                for bs in blendshapes
-                if hasattr(bs, "category_name") and hasattr(bs, "score")
             ],
         }
 
@@ -761,7 +737,7 @@ class Predictor(BasePredictor):
             coco_keypoints=json.dumps(
                 self.aggregate_coco(all_results, original_w, original_h), indent=2
             ),
-            facs=json.dumps({"people": [r["facs"] for r in all_results]}, indent=2),
+            blendshapes=json.dumps({"people": [r["blendshapes"] for r in all_results]}, indent=2),
             fullbodyfacs=json.dumps(
                 {"people": [r["fullbodyfacs"] for r in all_results]}, indent=2
             ),
@@ -898,10 +874,20 @@ class Predictor(BasePredictor):
             print(f"Video conversion failed: {e}")
             final_video_path = debug_video_path
 
+        frame_results.append(
+            {
+                "coco": self.aggregate_coco(all_results, width, height),
+                "blendshapes": [r["blendshapes"] for r in all_results],
+                "fullbodyfacs": [r["fullbodyfacs"] for r in all_results],
+                "hands": [r["hands"] for r in all_results],
+                "num_people": current_people,
+            }
+        )
+
         return Output(
             coco_keypoints=json.dumps([f["coco"] for f in frame_results], indent=2),
-            facs=json.dumps(
-                {"frames": [{"people": f["facs"]} for f in frame_results]}, indent=2
+            blendshapes=json.dumps(
+                {"frames": [{"people": f["blendshapes"]} for f in frame_results]}, indent=2
             ),
             fullbodyfacs=json.dumps(
                 {"frames": [{"people": f["fullbodyfacs"]} for f in frame_results]},
@@ -1000,12 +986,7 @@ class Predictor(BasePredictor):
             x, y = kp["position"][0], kp["position"][1]
             bbox = [(x-4, y-4), (x+4, y+4)]
             
-            # Body keypoints (original COCO 0-16)
-            if kp["id"] < 17:
-                color = colors["blue"]
-            # Facial keypoints (COCO 17-28 + custom)
-            else:
-                color = colors["red"]
+            color = colors["blue"]
             
             draw.ellipse(bbox, fill=color, outline=None)
 

@@ -1,1 +1,133 @@
-[{"left": [], "right": [{"index": 0, "x": 0.5579983592033386, "y": 0.7183391451835632, "name": "right_wrist"}, {"index": 1, "x": 0.5838562250137329, "y": 0.7014369368553162, "name": "rightThumbMetacarpal"}, {"index": 2, "x": 0.6155485510826111, "y": 0.6851028203964233, "name": "rightThumbProximal"}, {"index": 3, "x": 0.6439052820205688, "y": 0.6745924949645996, "name": "rightThumbDistal"}, {"index": 4, "x": 0.6705537438392639, "y": 0.6666719913482666, "name": null}, {"index": 5, "x": 0.6046283841133118, "y": 0.6959258317947388, "name": "rightIndexProximal"}, {"index": 6, "x": 0.6550899744033813, "y": 0.6782659888267517, "name": "rightIndexIntermediate"}, {"index": 7, "x": 0.6902706027030945, "y": 0.6633908152580261, "name": "rightIndexDistal"}, {"index": 8, "x": 0.7191311717033386, "y": 0.6519364714622498, "name": null}, {"index": 9, "x": 0.6076860427856445, "y": 0.7048289179801941, "name": "rightMiddleProximal"}, {"index": 10, "x": 0.6520019769668579, "y": 0.6810926198959351, "name": "rightMiddleIntermediate"}, {"index": 11, "x": 0.6905621290206909, "y": 0.6629098653793335, "name": "rightMiddleDistal"}, {"index": 12, "x": 0.7236427068710327, "y": 0.6490324139595032, "name": null}, {"index": 13, "x": 0.6113702654838562, "y": 0.7136451005935669, "name": "rightRingProximal"}, {"index": 14, "x": 0.6548966765403748, "y": 0.6919970512390137, "name": "rightRingIntermediate"}, {"index": 15, "x": 0.6931025981903076, "y": 0.6744177937507629, "name": "rightRingDistal"}, {"index": 16, "x": 0.7224511504173279, "y": 0.6589940190315247, "name": null}, {"index": 17, "x": 0.6157552003860474, "y": 0.7222527265548706, "name": "rightLittleProximal"}, {"index": 18, "x": 0.6491549015045166, "y": 0.7029696106910706, "name": "rightLittleIntermediate"}, {"index": 19, "x": 0.676925003528595, "y": 0.685490608215332, "name": "rightLittleDistal"}, {"index": 20, "x": 0.7005650997161865, "y": 0.6683253645896912, "name": null}]}]
+[
+    {
+        "left": [],
+        "right": [
+            {
+                "index": 0,
+                "x": 0.5579983592033386,
+                "y": 0.7183391451835632,
+                "name": "right_wrist"
+            },
+            {
+                "index": 1,
+                "x": 0.5838562250137329,
+                "y": 0.7014369368553162,
+                "name": "rightThumbMetacarpal"
+            },
+            {
+                "index": 2,
+                "x": 0.6155485510826111,
+                "y": 0.6851028203964233,
+                "name": "rightThumbProximal"
+            },
+            {
+                "index": 3,
+                "x": 0.6439052820205688,
+                "y": 0.6745924949645996,
+                "name": "rightThumbDistal"
+            },
+            {
+                "index": 4,
+                "x": 0.6705537438392639,
+                "y": 0.6666719913482666,
+                "name": null
+            },
+            {
+                "index": 5,
+                "x": 0.6046283841133118,
+                "y": 0.6959258317947388,
+                "name": "rightIndexProximal"
+            },
+            {
+                "index": 6,
+                "x": 0.6550899744033813,
+                "y": 0.6782659888267517,
+                "name": "rightIndexIntermediate"
+            },
+            {
+                "index": 7,
+                "x": 0.6902706027030945,
+                "y": 0.6633908152580261,
+                "name": "rightIndexDistal"
+            },
+            {
+                "index": 8,
+                "x": 0.7191311717033386,
+                "y": 0.6519364714622498,
+                "name": null
+            },
+            {
+                "index": 9,
+                "x": 0.6076860427856445,
+                "y": 0.7048289179801941,
+                "name": "rightMiddleProximal"
+            },
+            {
+                "index": 10,
+                "x": 0.6520019769668579,
+                "y": 0.6810926198959351,
+                "name": "rightMiddleIntermediate"
+            },
+            {
+                "index": 11,
+                "x": 0.6905621290206909,
+                "y": 0.6629098653793335,
+                "name": "rightMiddleDistal"
+            },
+            {
+                "index": 12,
+                "x": 0.7236427068710327,
+                "y": 0.6490324139595032,
+                "name": null
+            },
+            {
+                "index": 13,
+                "x": 0.6113702654838562,
+                "y": 0.7136451005935669,
+                "name": "rightRingProximal"
+            },
+            {
+                "index": 14,
+                "x": 0.6548966765403748,
+                "y": 0.6919970512390137,
+                "name": "rightRingIntermediate"
+            },
+            {
+                "index": 15,
+                "x": 0.6931025981903076,
+                "y": 0.6744177937507629,
+                "name": "rightRingDistal"
+            },
+            {
+                "index": 16,
+                "x": 0.7224511504173279,
+                "y": 0.6589940190315247,
+                "name": null
+            },
+            {
+                "index": 17,
+                "x": 0.6157552003860474,
+                "y": 0.7222527265548706,
+                "name": "rightLittleProximal"
+            },
+            {
+                "index": 18,
+                "x": 0.6491549015045166,
+                "y": 0.7029696106910706,
+                "name": "rightLittleIntermediate"
+            },
+            {
+                "index": 19,
+                "x": 0.676925003528595,
+                "y": 0.685490608215332,
+                "name": "rightLittleDistal"
+            },
+            {
+                "index": 20,
+                "x": 0.7005650997161865,
+                "y": 0.6683253645896912,
+                "name": null
+            }
+        ]
+    }
+]
