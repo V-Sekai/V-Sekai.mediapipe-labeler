@@ -21,7 +21,7 @@ import math
 import numpy as np
 import os
 import sys
-from moviepy.editor import VideoFileClip
+from moviepy import VideoFileClip
 import urllib.request
 import mediapipe as mp
 from mediapipe.tasks import python
