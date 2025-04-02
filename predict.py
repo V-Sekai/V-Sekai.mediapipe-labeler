@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 import cv2
 from tqdm import tqdm
 import subprocess
@@ -30,7 +31,6 @@ from typing import List, Tuple, Optional
 from datetime import datetime
 
 
-# 1€ Filter Implementation
 class LowPassFilter:
     def __init__(self, alpha: float) -> None:
         self.__set_alpha(alpha)
@@ -91,9 +91,7 @@ class OneEuroFilter:
         return self.x_filter(x, alpha=self.alpha(cutoff))
 
 
-# Configuration
 COCO_KEYPOINT_NAMES = [
-    # Original 29 body/face keypoints
     "nose",
     "left_eye",
     "right_eye",
@@ -123,89 +121,45 @@ COCO_KEYPOINT_NAMES = [
     "lip_lower",
     "lip_corner_left",
     "lip_corner_right",
-    # Left hand (21 keypoints)
     *[f"left_hand_{i}" for i in range(21)],
-    # Right hand (21 keypoints)
     *[f"right_hand_{i}" for i in range(21)],
 ]
 
-COCO_SKELETON = [
-    # Original body connections
-    [16, 14],
-    [14, 12],
-    [17, 15],
-    [15, 13],
-    [12, 13],
-    [6, 12],
-    [7, 13],
-    [6, 7],
-    [6, 8],
-    [7, 9],
-    [8, 10],
-    [9, 11],
-    [2, 3],
-    [1, 2],
-    [1, 3],
-    [2, 4],
-    [3, 5],
-    [4, 6],
-    [5, 7],
-    [17, 18],
-    [18, 0],
-    [19, 17],
-    [20, 18],
-    [21, 17],
-    [22, 18],
-    [23, 21],
-    [24, 22],
-    [25, 27],
-    [26, 28],
-    [27, 25],
-    [28, 25],
-    # Hand connections (optional)
-    # Left hand
-    [29, 30],
-    [30, 31],
-    [31, 32],
-    [32, 33],  # Thumb
-    [29, 34],
-    [34, 35],
-    [35, 36],
-    [36, 37],  # Index
-    [29, 38],
-    [38, 39],
-    [39, 40],
-    [40, 41],  # Middle
-    [29, 42],
-    [42, 43],
-    [43, 44],
-    [44, 45],  # Ring
-    [29, 46],
-    [46, 47],
-    [47, 48],
-    [48, 49],  # Pinky
-    # Right hand
-    [50, 51],
-    [51, 52],
-    [52, 53],
-    [53, 54],  # Thumb
-    [50, 55],
-    [55, 56],
-    [56, 57],
-    [57, 58],  # Index
-    [50, 59],
-    [59, 60],
-    [60, 61],
-    [61, 62],  # Middle
-    [50, 63],
-    [63, 64],
-    [64, 65],
-    [65, 66],  # Ring
-    [50, 67],
-    [67, 68],
-    [68, 69],
-    [69, 70],  # Pinky
-]
+COCO_PARENT = {
+    0: -1,
+    1: 0,
+    2: 0,
+    3: 1,
+    4: 2,
+    5: 0,
+    6: 0,
+    7: 5,
+    8: 6,
+    9: 7,
+    10: 8,
+    11: 5,
+    12: 6,
+    13: 11,
+    14: 12,
+    15: 13,
+    16: 14,
+    17: 0,
+    18: 0,
+    19: 17,
+    20: 18,
+    21: 0,
+    22: 0,
+    23: 0,
+    24: 0,
+    25: 0,
+    26: 25,
+    27: 25,
+    28: 25,
+    29: 9,
+    **{i: i - 1 for i in range(30, 50)},
+    50: 10,
+    **{i: i - 1 for i in range(51, 71)},
+}
 
 
 class Output(BaseModel):
@@ -268,7 +222,6 @@ class PersonProcessor:
             print(f"Processing error: {e}")
             return None
 
-        # Coordinate mapping functions
         def map_x(x):
             return (x / new_w) * (endX - startX) + startX
 
@@ -278,7 +231,6 @@ class PersonProcessor:
         def map_z(z):
             return z * scale
 
-        # Process pose landmarks
         mapped_pose = landmark_pb2.NormalizedLandmarkList()
         if pose_result.pose_landmarks:
             for lmk in pose_result.pose_landmarks.landmark:
@@ -291,7 +243,7 @@ class PersonProcessor:
                         z=map_z(lmk.z),
                         visibility=lmk.visibility,
                     )
-        # Process face landmarks
+
         mapped_face = []
         if face_result.face_landmarks:
             facial_indices = [105, 334, 46, 276, 159, 386, 145, 374, 13, 14, 61, 291]
@@ -305,7 +257,7 @@ class PersonProcessor:
                             "z": float(map_z(lmk.z)),
                         }
                     )
-        # Process hands
+
         left_hand, right_hand = [], []
         if hand_result.hand_landmarks:
             for idx, handedness in enumerate(hand_result.handedness):
@@ -317,11 +269,11 @@ class PersonProcessor:
                     }
                     for lmk in hand_result.hand_landmarks[idx]
                 ]
-
                 if handedness[0].display_name == "Left":
                     left_hand = hand
                 else:
                     right_hand = hand
+
         return {
             "coco": FullBodyProcessor.create_coco_output(
                 mapped_pose, mapped_face, left_hand, right_hand, original_size
@@ -339,63 +291,74 @@ class FullBodyProcessor:
     @staticmethod
     def create_coco_output(pose, face, left_hand, right_hand, image_size) -> dict:
         height, width = image_size
-        keypoints = []
+        num_keypoints = len(COCO_KEYPOINT_NAMES)
+        keypoints = [0.0] * (num_keypoints * 3)  # Initialize with zeros
         num_visible = 0
-        # Process body keypoints
+
+        # Process body keypoints (indices 0-16)
         if pose:
             for idx in range(17):
                 if idx < len(pose.landmark):
                     lmk = pose.landmark[idx]
                     if lmk.visibility >= 0.1:
                         vis_flag = 2 if lmk.visibility > 0.5 else 1
-                        keypoints += [lmk.x * width, lmk.y * height, vis_flag]
+                        keypoints[idx*3] = lmk.x * width
+                        keypoints[idx*3+1] = lmk.y * height
+                        keypoints[idx*3+2] = vis_flag
                         num_visible += 1 if vis_flag == 2 else 0
-                    else:
-                        keypoints += [0.0, 0.0, 0]
-                else:
-                    keypoints += [0.0, 0.0, 0]
-        # Process facial keypoints
-        for lmk in face:
-            keypoints += [lmk["x"] * width, lmk["y"] * height, 2]
+
+        # Process face keypoints (indices 17-28)
+        for i, lmk in enumerate(face[:12]):  # Ensure max 12 face points
+            idx = 17 + i
+            keypoints[idx*3] = lmk["x"] * width
+            keypoints[idx*3+1] = lmk["y"] * height
+            keypoints[idx*3+2] = 2
             num_visible += 1
-        # Process hands (21 landmarks per hand)
-        for lmk in left_hand:
-            keypoints += [lmk["x"] * width, lmk["y"] * height, 2]
+
+        # Process left hand (indices 29-49)
+        for i, lmk in enumerate(left_hand[:21]):  # Ensure max 21 points
+            idx = 29 + i
+            keypoints[idx*3] = lmk["x"] * width
+            keypoints[idx*3+1] = lmk["y"] * height
+            keypoints[idx*3+2] = 2
             num_visible += 1
-        for lmk in right_hand:
-            keypoints += [lmk["x"] * width, lmk["y"] * height, 2]
+
+        # Process right hand (indices 50-70)
+        for i, lmk in enumerate(right_hand[:21]):  # Ensure max 21 points
+            idx = 50 + i
+            keypoints[idx*3] = lmk["x"] * width
+            keypoints[idx*3+1] = lmk["y"] * height
+            keypoints[idx*3+2] = 2
             num_visible += 1
-        # Neck position adjustment
-        if pose and len(pose.landmark) > 12:
-            nose = pose.landmark[0]
-            left_sh = pose.landmark[11]
-            right_sh = pose.landmark[12]
-            if left_sh.visibility >= 0.5 and right_sh.visibility >= 0.5:
-                neck_x = (left_sh.x + right_sh.x) / 2 * width
-                keypoints[0] = (nose.x * width + neck_x) / 2
-            keypoints[1] = nose.y * height
+
+        keypoint_objects = []
+        for idx in range(num_keypoints):
+            keypoint_objects.append({
+                "id": idx,
+                "position": [keypoints[idx*3], keypoints[idx*3+1]],
+                "visibility": keypoints[idx*3+2],
+                "parent": COCO_PARENT.get(idx, -1)
+            })
+
         return {
-            "annotations": [
-                {
-                    "id": 0,
-                    "image_id": 0,
-                    "category_id": 1,
-                    "iscrowd": 0,
-                    "keypoints": keypoints,
-                    "num_keypoints": num_visible,
-                    "bbox": FullBodyProcessor.calculate_bbox(keypoints),
-                    "area": width * height,
-                }
-            ],
-            "categories": [
-                {
-                    "id": 1,
-                    "name": "person",
-                    "supercategory": "person",
-                    "keypoints": COCO_KEYPOINT_NAMES,
-                    "skeleton": COCO_SKELETON,
-                }
-            ],
+            "annotations": [{
+                "keypoint_objects": keypoint_objects,
+                "id": 0,
+                "image_id": 0,
+                "category_id": 1,
+                "iscrowd": 0,
+                "keypoints": keypoints,
+                "num_keypoints": num_visible,
+                "bbox": FullBodyProcessor.calculate_bbox(keypoints),
+                "area": width * height,
+            }],
+            "categories": [{
+                "id": 1,
+                "name": "person",
+                "supercategory": "person",
+                "keypoints": COCO_KEYPOINT_NAMES,
+                "skeleton": list(COCO_PARENT.items()),
+            }],
         }
 
     @staticmethod
@@ -438,7 +401,7 @@ class Predictor(BasePredictor):
             path = f"thirdparty/{filename}"
             if not os.path.exists(path):
                 urllib.request.urlretrieve(url, path)
-        # Initialize models
+
         self.face_processor = vision.FaceLandmarker.create_from_options(
             vision.FaceLandmarkerOptions(
                 base_options=python.BaseOptions(
@@ -462,7 +425,7 @@ class Predictor(BasePredictor):
                 num_hands=2,
             )
         )
-        # Initialize filters
+
         self.filters = [OneEuroFilter() for _ in COCO_KEYPOINT_NAMES]
 
     def predict(
@@ -470,11 +433,7 @@ class Predictor(BasePredictor):
         media_path: Path,
         max_people: int = 20,
         frame_sample_rate: int = 1,
-        max_processing_seconds: int = Input(
-            description="Maximum processing time in seconds (0=unlimited)",
-            ge=0,
-            default=0,
-        ),
+        max_processing_seconds: int = 0,
     ) -> Output:
         if media_path.suffix.lower() in (".mp4", ".avi", ".mov"):
             return self.process_video(
@@ -494,6 +453,7 @@ class Predictor(BasePredictor):
             result = PersonProcessor.process_crop(crop, box, (h, w), self)
             if result:
                 results.append(result)
+
         return Output(
             coco_keypoints=json.dumps(self.aggregate_coco(results, w, h)),
             blendshapes=json.dumps({"people": [r["blendshapes"] for r in results]}),
@@ -507,7 +467,7 @@ class Predictor(BasePredictor):
         video_path: Path,
         max_people: int,
         frame_sample_rate: int,
-        max_processing_seconds: int = 60,
+        max_processing_seconds: int,
     ) -> Output:
         cap = cv2.VideoCapture(str(video_path))
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -520,10 +480,10 @@ class Predictor(BasePredictor):
             cap.get(cv2.CAP_PROP_FPS) / frame_sample_rate,
             (width, height),
         )
+
         frame_results = []
         max_people_count = 0
         progress = tqdm(total=total_frames, desc="Processing video")
-
         start_time = datetime.now()
         frame_count = 0
 
@@ -547,6 +507,7 @@ class Predictor(BasePredictor):
                     )
                     if result:
                         results.append(result)
+
                 max_people_count = max(max_people_count, len(results))
                 frame_results.append(
                     {
@@ -554,6 +515,7 @@ class Predictor(BasePredictor):
                         "blendshapes": [r["blendshapes"] for r in results],
                     }
                 )
+
                 debug_frame = self.annotate_frame(frame_rgb, results)
                 debug_video.write(
                     cv2.cvtColor(np.array(debug_frame), cv2.COLOR_RGB2BGR)
@@ -577,69 +539,49 @@ class Predictor(BasePredictor):
             total_frames=len(frame_results),
         )
 
+    def draw_skeleton(self, draw, keypoints, colors):
+        kp_dict = {kp["id"]: kp for kp in keypoints}
+        connections = []
+
+        for kp in keypoints:
+            parent_id = kp.get("parent", -1)
+            if parent_id in kp_dict:
+                connections.append((kp_dict[parent_id], kp))
+
+        for parent, child in connections:
+            if parent.get("visibility", 1) < 0.5 or child.get("visibility", 1) < 0.5:
+                continue
+            x1, y1 = parent["position"][0], parent["position"][1]
+            x2, y2 = child["position"][0], child["position"][1]
+            draw.line([(x1, y1), (x2, y2)], fill=colors["orange"], width=2)
+
+        for kp in keypoints:
+            if kp.get("visibility", 1) < 0.5:
+                continue
+            x, y = kp["position"]
+            bbox = [(x - 4, y - 4), (x + 4, y + 4)]
+            draw.ellipse(bbox, fill=colors["blue"], outline=None)
+
     def annotate_frame(self, frame: np.ndarray, results: list) -> Image.Image:
         annotated = Image.fromarray(frame)
         draw = ImageDraw.Draw(annotated)
-        colors = {
-            "body": (0, 255, 0),  # Green
-            "face": (255, 0, 0),  # Red
-            "left_hand": (0, 0, 255),  # Blue
-            "right_hand": (255, 0, 255),  # Magenta
-        }
+        colors = {"body": (0, 255, 0), "orange": (255, 165, 0), "blue": (0, 0, 255)}
+
         for result in results:
             box = result.get("box", (0, 0, 0, 0))
             draw.rectangle(
                 [(box[0], box[1]), (box[2], box[3])], outline=colors["body"], width=2
             )
-            keypoints = result["coco"]["annotations"][0]["keypoints"]
-            num_keypoints = len(keypoints) // 3
 
-            # Validate keypoint count
-            if num_keypoints != len(COCO_KEYPOINT_NAMES):
-                print(
-                    f"Warning: Keypoint count mismatch. Expected {len(COCO_KEYPOINT_NAMES)}, got {num_keypoints}"
-                )
-            # Draw keypoints with color coding
-            for i in range(num_keypoints):
-                x = keypoints[i * 3]
-                y = keypoints[i * 3 + 1]
-                vis = keypoints[i * 3 + 2]
-                if vis > 0:
-                    color = colors["body"]
-                    if 17 <= i <= 28:  # Face
-                        color = colors["face"]
-                    elif 29 <= i <= 49:  # Left hand
-                        color = colors["left_hand"]
-                    elif 50 <= i <= 70:  # Right hand
-                        color = colors["right_hand"]
-                    draw.ellipse([(x - 3, y - 3), (x + 3, y + 3)], fill=color)
-            # Draw skeleton connections with validation
-            for a, b in COCO_SKELETON:
-                if a >= num_keypoints or b >= num_keypoints:
-                    continue  # Skip invalid connections
-                ax = keypoints[a * 3]
-                ay = keypoints[a * 3 + 1]
-                avis = keypoints[a * 3 + 2]
-                bx = keypoints[b * 3]
-                by = keypoints[b * 3 + 1]
-                bvis = keypoints[b * 3 + 2]
+            if "coco" in result and result["coco"]["annotations"]:
+                annotation = result["coco"]["annotations"][0]
+                keypoint_objects = annotation.get("keypoint_objects", [])
+                self.draw_skeleton(draw, keypoint_objects, colors)
 
-                if avis > 0 and bvis > 0:
-                    color = colors["body"]
-                    # Determine connection group
-                    if (29 <= a <= 49) or (29 <= b <= 49):
-                        color = colors["left_hand"]
-                    elif (50 <= a <= 70) or (50 <= b <= 70):
-                        color = colors["right_hand"]
-                    elif (17 <= a <= 28) or (17 <= b <= 28):
-                        color = colors["face"]
-
-                    draw.line([(ax, ay), (bx, by)], fill=color, width=2)
         return annotated
 
     def create_debug_image(self, img: np.ndarray, results: list) -> Path:
-        pil_img = Image.fromarray(img)
-        debug_img = self.annotate_frame(np.array(pil_img), results)
+        debug_img = self.annotate_frame(img, results)
         debug_img.save("/tmp/debug.jpg")
         return Path("/tmp/debug.jpg")
 
@@ -662,7 +604,7 @@ class Predictor(BasePredictor):
                     "id": 1,
                     "name": "person",
                     "keypoints": COCO_KEYPOINT_NAMES,
-                    "skeleton": COCO_SKELETON,
+                    "skeleton": list(COCO_PARENT.items()),
                 }
             ],
         }
