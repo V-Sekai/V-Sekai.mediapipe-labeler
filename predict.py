@@ -501,6 +501,7 @@ class FullBodyProcessor:
                     "index": idx,
                     "x": lmk.x,
                     "y": lmk.y,
+                    "z": lmk.z,  # Fixed: Added z-coordinate
                     "name": ("left_wrist" if is_left else "right_wrist")
                     if idx == 0
                     else (
@@ -783,7 +784,9 @@ class Predictor(BasePredictor):
             if kp_id >= len(self.keypoint_filters):
                 continue
 
-            x, y, z = kp["position"]
+            x = kp["position"][0]
+            y = kp["position"][1]
+            z = kp["position"][2]
             vis = kp["visibility"]
 
             kp["position"] = [
@@ -802,16 +805,23 @@ class Predictor(BasePredictor):
                 filtered_blendshapes.append({"name": name, "score": filtered_score})
         person_data["blendshapes"] = filtered_blendshapes
 
-        # Filter hands
+        # Filter hands with error handling
         for hand_type in ["left", "right"]:
             hand = person_data["hands"].get(hand_type, [])
             for idx, landmark in enumerate(hand):
                 if idx >= 21:
                     continue
                 filters = self.hand_filters[hand_type][idx]
-                landmark["x"] = filters["x"](landmark["x"], timestamp)
-                landmark["y"] = filters["y"](landmark["y"], timestamp)
-                landmark["z"] = filters["z"](landmark["z"], timestamp)
+
+                # Safe coordinate access with defaults
+                x = landmark.get("x", 0.0)
+                y = landmark.get("y", 0.0)
+                z = landmark.get("z", 0.0)
+
+                # Apply filters
+                landmark["x"] = filters["x"](x, timestamp)
+                landmark["y"] = filters["y"](y, timestamp)
+                landmark["z"] = filters["z"](z, timestamp)
 
     def annotate_video_frame(self, frame: np.ndarray, results: list) -> np.ndarray:
         annotated = Image.fromarray(frame)
