@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import cv2
+import subprocess
 from tqdm import tqdm
 import json
 from PIL import ImageDraw, ImageFont
