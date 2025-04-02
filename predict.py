@@ -1031,11 +1031,3 @@ class Predictor(BasePredictor):
                 "categories"
             ],
         }
-
-
-if __name__ == "__main__":
-    predictor = Predictor()
-    predictor.setup()
-    media_path = sys.argv[1] if len(sys.argv) > 1 else "input.mp4"
-    result = predictor.predict(media_path)
-    print(json.dumps(json.loads(result.json()), indent=2))
