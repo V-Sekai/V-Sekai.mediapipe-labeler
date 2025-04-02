@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import cv2
-import subprocess
 from tqdm import tqdm
 import json
 from PIL import ImageDraw, ImageFont
@@ -22,7 +21,6 @@ import numpy as np
 import os
 import sys
 import urllib.request
-import tempfile
 import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
@@ -691,11 +689,12 @@ class Predictor(BasePredictor):
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         fps = cap.get(cv2.CAP_PROP_FPS)
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        original_fps = fps
 
-        # Create temporary directory for frame outputs
-        debug_frames_dir = Path(tempfile.mkdtemp(prefix="frame_outputs_"))
-        debug_frames_dir.mkdir(exist_ok=True)
+        debug_video_path = "/tmp/debug_output.mp4"
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        out = cv2.VideoWriter(
+            debug_video_path, fourcc, fps / frame_sample_rate, (width, height)
+        )
 
         frame_results = []
         frame_count = 0
@@ -741,17 +740,7 @@ class Predictor(BasePredictor):
                 self.apply_filters(main_person, timestamp)
 
             annotated_frame = self.annotate_video_frame(img_np, all_results)
-
-            # Save frame as WebP lossless
-            frame_filename = f"frame_{processed_count:06d}.webp"
-            frame_path = debug_frames_dir / frame_filename
-            Image.fromarray(annotated_frame).save(
-                str(frame_path),
-                format="WEBP",
-                lossless=True,
-                method=6,  # Fastest encoding method
-            )
-
+            out.write(cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR))
             frame_results.append(
                 {
                     "mediapipe": self.aggregate_mediapipe(all_results, width, height),
@@ -768,47 +757,7 @@ class Predictor(BasePredictor):
 
         progress.close()
         cap.release()
-
-        # Encode to WebM/VP9 using FFmpeg
-        output_path = Path("/tmp/output.webm")
-        ffmpeg_cmd = [
-            "ffmpeg",
-            "-y",
-            "-framerate",
-            str(original_fps / frame_sample_rate),
-            "-pattern_type",
-            "glob",
-            "-i",
-            f"{debug_frames_dir}/frame_*.webp",
-            "-c:v",
-            "libvpx-vp9",
-            "-row-mt",
-            "1",
-            "-crf",
-            "30",
-            "-b:v",
-            "0",
-            "-cpu-used",
-            "4",
-            "-threads",
-            str(os.cpu_count() or 4),
-            "-pass",
-            "1",
-            "-f",
-            "webm",
-            str(output_path),
-        ]
-
-        try:
-            subprocess.run(ffmpeg_cmd, check=True, stderr=subprocess.PIPE)
-        except subprocess.CalledProcessError as e:
-            print(f"FFmpeg encoding failed: {e.stderr.decode()}")
-            raise RuntimeError("Video encoding failed") from e
-        finally:
-            # Clean up temporary frames
-            for f in debug_frames_dir.glob("*.webp"):
-                f.unlink()
-            debug_frames_dir.rmdir()
+        out.release()
 
         return Output(
             mediapipe_keypoints=json.dumps(
@@ -822,7 +771,7 @@ class Predictor(BasePredictor):
                 {"frames": [{"people": f["fullbody"]} for f in frame_results]}, indent=2
             ),
             hand_landmarks=json.dumps([f["hands"] for f in frame_results], indent=2),
-            debug_media=output_path,
+            debug_media=Path(debug_video_path),
             num_people=max(f["num_people"] for f in frame_results),
             media_type="video",
             total_frames=processed_count,
