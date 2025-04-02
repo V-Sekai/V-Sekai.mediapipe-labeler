@@ -776,7 +776,7 @@ class Predictor(BasePredictor):
         # Add audio to the debug video
         original_video = VideoFileClip(str(video_path))
         debug_video = VideoFileClip(debug_video_path)
-        final_video = debug_video.set_audio(original_video.audio)
+        final_video = debug_video.with_audio(original_video.audio)
         final_video.write_videofile("/tmp/debug_output_with_audio.mp4")
 
         # Convert the video to a widely supported format
