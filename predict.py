@@ -13,8 +13,10 @@
 # limitations under the License.
 
 import cv2
+from tqdm import tqdm
 import json
 from PIL import ImageDraw, ImageFont
+import math
 import numpy as np
 import os
 import sys
@@ -29,6 +31,80 @@ from PIL import Image
 from typing import Any, Dict, List, Tuple, Optional, Union
 from datetime import datetime
 from pathlib import Path as PathLib
+
+
+# 1€ Filter Implementation
+class LowPassFilter:
+    def __init__(self, alpha: float) -> None:
+        self.__setAlpha(alpha)
+        self.__y = self.__s = None
+
+    def __setAlpha(self, alpha: float) -> None:
+        alpha = float(alpha)
+        if alpha <= 0 or alpha > 1.0:
+            raise ValueError(f"alpha ({alpha}) should be in (0.0, 1.0]")
+        self.__alpha = alpha
+
+    def __call__(
+        self, value: float, timestamp: float = None, alpha: float = None
+    ) -> float:
+        if alpha is not None:
+            self.__setAlpha(alpha)
+        if self.__y is None:
+            s = value
+        else:
+            s = self.__alpha * value + (1.0 - self.__alpha) * self.__s
+        self.__y = value
+        self.__s = s
+        return s
+
+    def lastValue(self) -> float:
+        return self.__y
+
+    def lastFilteredValue(self) -> float:
+        return self.__s
+
+    def reset(self) -> None:
+        self.__y = None
+
+
+class OneEuroFilter:
+    def __init__(
+        self,
+        freq: float,
+        mincutoff: float = 1.0,
+        beta: float = 0.0,
+        dcutoff: float = 1.0,
+    ) -> None:
+        if freq <= 0:
+            raise ValueError("freq should be >0")
+        if mincutoff <= 0:
+            raise ValueError("mincutoff should be >0")
+        if dcutoff <= 0:
+            raise ValueError("dcutoff should be >0")
+        self.__freq = float(freq)
+        self.__mincutoff = float(mincutoff)
+        self.__beta = float(beta)
+        self.__dcutoff = float(dcutoff)
+        self.__x = LowPassFilter(self.__alpha(self.__mincutoff))
+        self.__dx = LowPassFilter(self.__alpha(self.__dcutoff))
+        self.__lasttime = None
+
+    def __alpha(self, cutoff: float) -> float:
+        te = 1.0 / self.__freq
+        tau = 1.0 / (2 * math.pi * cutoff)
+        return 1.0 / (1.0 + tau / te)
+
+    def __call__(self, x: float, timestamp: float = None) -> float:
+        if self.__lasttime and timestamp and timestamp > self.__lasttime:
+            self.__freq = 1.0 / (timestamp - self.__lasttime)
+        self.__lasttime = timestamp
+        prev_x = self.__x.lastFilteredValue()
+        dx = 0.0 if prev_x is None else (x - prev_x) * self.__freq
+        edx = self.__dx(dx, timestamp, alpha=self.__alpha(self.__dcutoff))
+        cutoff = self.__mincutoff + self.__beta * math.fabs(edx)
+        return self.__x(x, timestamp, alpha=self.__alpha(cutoff))
+
 
 # Configuration
 COCO_KEYPOINT_NAMES = [
@@ -617,6 +693,19 @@ class Predictor(BasePredictor):
             )
         )
 
+        # Initialize 1€ filters for each keypoint coordinate
+        self.filters_x = []
+        self.filters_y = []
+        num_keypoints = len(COCO_KEYPOINT_NAMES)
+        mincutoff = 1.0  # Lower values = more smoothing
+        beta = 0.7  # Higher values = more responsive to movement
+        dcutoff = 1.0
+        initial_freq = 30
+
+        for _ in range(num_keypoints):
+            self.filters_x.append(OneEuroFilter(initial_freq, mincutoff, beta, dcutoff))
+            self.filters_y.append(OneEuroFilter(initial_freq, mincutoff, beta, dcutoff))
+
     def predict(
         self,
         media_path: Path = Input(description="Input image or video file"),
@@ -699,10 +788,21 @@ class Predictor(BasePredictor):
         frame_count = 0
         processed_count = 0
 
+        # Initialize progress bar
+        progress = tqdm(
+            total=total_frames,
+            desc="Processing video",
+            unit="frame",
+            bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
+        )
+
         while cap.isOpened():
             ret, frame = cap.read()
             if not ret:
                 break
+
+            # Update progress bar for every frame read
+            progress.update(1)
 
             if frame_count % frame_sample_rate != 0:
                 frame_count += 1
@@ -728,6 +828,25 @@ class Predictor(BasePredictor):
                     person_result["box"] = box
                     all_results.append(person_result)
 
+            # Apply 1€ filter to keypoints
+            if all_results:
+                main_person = all_results[0]
+                coco_ann = main_person["coco"]["annotations"][0]
+                keypoints = coco_ann["keypoints"]
+                timestamp = frame_count / fps if fps > 0 else 0
+
+                for i in range(0, len(keypoints), 3):
+                    kp_idx = i // 3
+                    x = keypoints[i]
+                    y = keypoints[i + 1]
+                    vis = keypoints[i + 2]
+
+                    if vis > 0:  # Only process visible keypoints
+                        keypoints[i] = self.filters_x[kp_idx](x, timestamp)
+                        keypoints[i + 1] = self.filters_y[kp_idx](y, timestamp)
+
+                coco_ann["keypoints"] = keypoints
+
             # Annotate frame
             annotated_frame = self.annotate_video_frame(img_np, all_results)
             out.write(cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR))
@@ -745,7 +864,9 @@ class Predictor(BasePredictor):
 
             processed_count += 1
             frame_count += 1
+            progress.set_postfix_str(f"Processed: {processed_count} frames")
 
+        progress.close()
         cap.release()
         out.release()
 
@@ -779,19 +900,24 @@ class Predictor(BasePredictor):
 
         for result in results:
             startX, startY, endX, endY = result["box"]
+            # Draw bounding box
             draw.rectangle(
                 [(startX, startY), (endX, endY)], outline=colors["green"], width=2
             )
 
+            # Draw skeleton and keypoints
             keypoints = result["fullbodyfacs"]["keypoints"]
             self.draw_skeleton(draw, keypoints, colors)
+
+            # Draw person ID label
+            label = f"Person {result['person_id']}"
+            draw.text((startX, startY - 20), label, fill=colors["green"])
 
         return np.array(annotated)
 
     def create_debug_image(self, img_np: np.ndarray, all_results: list) -> Path:
         annotated = Image.fromarray(img_np)
         draw = ImageDraw.Draw(annotated)
-
         colors = {
             "green": (0, 255, 0),
             "blue": (255, 0, 0),
