@@ -15,6 +15,7 @@
 
 import cv2
 from tqdm import tqdm
+import subprocess
 import json
 from PIL import ImageDraw, ImageFont
 import math
@@ -772,6 +773,36 @@ class Predictor(BasePredictor):
             media_type="image",
         )
 
+    # In the Predictor class's process_video method:
+    def process_video(
+        self, video_path: Path, max_people: int, frame_sample_rate: int
+    ) -> Output:
+        # [Existing video processing code...]
+
+        # After processing all frames but before conversion:
+        frame_count = 0
+        processed_count = 0
+        frame_results = []
+
+        # [Keep existing processing loop...]
+
+        # After closing video writer and before return:
+        return Output(
+            coco_keypoints=json.dumps([f["coco"] for f in frame_results], indent=2),
+            facs=json.dumps(
+                {"frames": [{"people": f["facs"]} for f in frame_results]}, indent=2
+            ),
+            fullbodyfacs=json.dumps(
+                {"frames": [{"people": f["fullbodyfacs"]} for f in frame_results]},
+                indent=2,
+            ),
+            hand_landmarks=json.dumps([f["hands"] for f in frame_results], indent=2),
+            debug_media=Path(final_video_path),
+            num_people=max(f["num_people"] for f in frame_results),
+            media_type="video",
+            total_frames=processed_count,
+        )
+
     def process_video(
         self, video_path: Path, max_people: int, frame_sample_rate: int
     ) -> Output:
@@ -788,19 +819,87 @@ class Predictor(BasePredictor):
             debug_video_path, fourcc, fps / frame_sample_rate, (width, height)
         )
 
-        # [Rest of video processing remains unchanged...]
+        frame_results = []
+        frame_count = 0
+        processed_count = 0
+        max_people_detected = 0
 
-        # Convert to Discord-compatible format with original audio
+        progress = tqdm(
+            total=total_frames,
+            desc="Processing video",
+            unit="frame",
+            bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
+        )
+
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            progress.update(1)
+
+            if frame_count % frame_sample_rate != 0:
+                frame_count += 1
+                continue
+
+            img_np = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            boxes = PersonProcessor.detect_people(img_np, max_people)
+            all_results = []
+
+            for person_id, box in enumerate(boxes):
+                startX, startY, endX, endY = box
+                crop = img_np[startY:endY, startX:endX]
+
+                if crop.size == 0:
+                    continue
+
+                person_result = PersonProcessor.process_crop(
+                    crop, box, (height, width), self
+                )
+
+                if person_result:
+                    person_result["person_id"] = person_id
+                    person_result["box"] = box
+                    all_results.append(person_result)
+
+            # Update max people count
+            current_people = len(all_results)
+            if current_people > max_people_detected:
+                max_people_detected = current_people
+
+            # Collect frame results
+            frame_results.append(
+                {
+                    "coco": self.aggregate_coco(all_results, width, height),
+                    "facs": [r["facs"] for r in all_results],
+                    "fullbodyfacs": [r["fullbodyfacs"] for r in all_results],
+                    "hands": [r["hands"] for r in all_results],
+                    "num_people": current_people,
+                }
+            )
+
+            # Annotate and write frame
+            annotated_frame = self.annotate_video_frame(img_np, all_results)
+            out.write(cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR))
+
+            processed_count += 1
+            frame_count += 1
+
+        progress.close()
+        cap.release()
+        out.release()
+
+        # Convert video format
         final_video_path = "/tmp/debug_output_final.mp4"
         try:
             subprocess.run(
                 [
                     "ffmpeg",
-                    "-y",  # Overwrite output
+                    "-y",
                     "-i",
-                    debug_video_path,  # Processed video
+                    debug_video_path,
                     "-i",
-                    str(video_path),  # Original video with audio
+                    str(video_path),
                     "-c:v",
                     "libx264",
                     "-preset",
@@ -812,27 +911,35 @@ class Predictor(BasePredictor):
                     "-c:a",
                     "aac",
                     "-map",
-                    "0:v:0",  # Video from processed
+                    "0:v:0",
                     "-map",
-                    "1:a:0",  # Audio from original
+                    "1:a:0",
                     "-movflags",
                     "+faststart",
-                    "-shortest",  # Match duration to shortest stream
+                    "-shortest",
                     final_video_path,
                 ],
                 check=True,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
-            os.remove(debug_video_path)  # Cleanup intermediate
+            os.remove(debug_video_path)
         except Exception as e:
             print(f"Video conversion failed: {e}")
-            final_video_path = debug_video_path  # Fallback
+            final_video_path = debug_video_path
 
         return Output(
-            # [Rest of output remains unchanged...]
+            coco_keypoints=json.dumps([f["coco"] for f in frame_results], indent=2),
+            facs=json.dumps(
+                {"frames": [{"people": f["facs"]} for f in frame_results]}, indent=2
+            ),
+            fullbodyfacs=json.dumps(
+                {"frames": [{"people": f["fullbodyfacs"]} for f in frame_results]},
+                indent=2,
+            ),
             debug_media=Path(final_video_path),
-            # [Other fields unchanged...]
+            hand_landmarks=json.dumps([f["hands"] for f in frame_results], indent=2),
+            num_people=max_people_detected,
         )
 
     def annotate_video_frame(self, frame: np.ndarray, results: list) -> np.ndarray:
