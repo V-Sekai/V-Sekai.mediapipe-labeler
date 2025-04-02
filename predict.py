@@ -772,6 +772,32 @@ class Predictor(BasePredictor):
         cap.release()
         out.release()
 
+        # Add audio to the debug video
+        original_video = VideoFileClip(str(video_path))
+        debug_video = VideoFileClip(debug_video_path)
+        final_video = debug_video.set_audio(original_video.audio)
+        final_video.write_videofile("/tmp/debug_output_with_audio.mp4")
+
+        # Convert the video to a widely supported format
+        import subprocess
+
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-i",
+                "/tmp/debug_output_with_audio.mp4",
+                "-c:v",
+                "libx264",
+                "-crf",
+                "18",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "128k",
+                "/tmp/debug_output_final.mp4",
+            ]
+        )
+
         with tempfile.NamedTemporaryFile(suffix=".json", delete=False, mode="w") as tmp:
             json.dump(
                 {
@@ -792,7 +818,7 @@ class Predictor(BasePredictor):
             mediapipe_keypoints=mediapipe_keypoints_path,
             blendshapes=mediapipe_keypoints_path,
             fullbody_data=mediapipe_keypoints_path,
-            debug_media=Path(debug_video_path),
+            debug_media=Path("/tmp/debug_output_final.mp4"),
             hand_landmarks=mediapipe_keypoints_path,
             num_people=max(f["num_people"] for f in frame_results),
             media_type="video",
