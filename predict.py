@@ -16,7 +16,6 @@ import cv2
 from tqdm import tqdm
 import subprocess
 import json
-from PIL import ImageDraw
 import math
 import numpy as np
 import os
@@ -26,7 +25,7 @@ from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 from mediapipe.framework.formats import landmark_pb2
 from cog import BasePredictor, Input, Path, BaseModel
-from PIL import Image
+from PIL import Image, ImageDraw
 from typing import List, Tuple, Optional
 from datetime import datetime
 
@@ -211,9 +210,6 @@ class PersonProcessor:
         resized = cv2.resize(crop, (new_w, new_h))
 
         try:
-            face_result = predictor.face_processor.detect(
-                mp.Image(image_format=mp.ImageFormat.SRGB, data=resized)
-            )
             pose_result = predictor.pose_processor.process(resized)
         except Exception as e:
             print(f"Processing error: {e}")
@@ -241,19 +237,8 @@ class PersonProcessor:
                         visibility=lmk.visibility,
                     )
 
+        # Remove face inference by setting an empty list.
         mapped_face = []
-        if face_result.face_landmarks:
-            facial_indices = [105, 334, 46, 276, 159, 386, 145, 374, 13, 14, 61, 291]
-            for idx in facial_indices:
-                if idx < len(face_result.face_landmarks[0]):
-                    lmk = face_result.face_landmarks[0][idx]
-                    mapped_face.append(
-                        {
-                            "x": float(map_x(lmk.x * new_w) / orig_w),
-                            "y": float(map_y(lmk.y * new_h) / orig_h),
-                            "z": float(map_z(lmk.z)),
-                        }
-                    )
 
         # Remove hand inference by setting empty lists for hands.
         left_hand, right_hand = [], []
@@ -285,13 +270,7 @@ class FullBodyProcessor:
                         keypoints[idx*3+2] = vis_flag
                         num_visible += 1 if vis_flag == 2 else 0
 
-        # Process face keypoints (indices 17-28)
-        for i, lmk in enumerate(face[:12]):  # Ensure max 12 face points
-            idx = 17 + i
-            keypoints[idx*3] = lmk["x"] * width
-            keypoints[idx*3+1] = lmk["y"] * height
-            keypoints[idx*3+2] = 2
-            num_visible += 1
+        # Remove face keypoints processing by leaving indices 17-28 as zeros
 
         # Leave left hand (indices 29-49) as zeros
 
@@ -353,33 +332,19 @@ class Predictor(BasePredictor):
                 "ssd_mobilenet_v2.tflite",
                 "https://storage.googleapis.com/mediapipe-models/object_detector/ssd_mobilenet_v2/float32/1/ssd_mobilenet_v2.tflite",
             ),
-            (
-                "face_landmarker.task",
-                "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
-            ),
         ]
-
+        # Download only the required model(s)
         for filename, url in models:
             path = f"thirdparty/{filename}"
             if not os.path.exists(path):
                 urllib.request.urlretrieve(url, path)
 
-        self.face_processor = vision.FaceLandmarker.create_from_options(
-            vision.FaceLandmarkerOptions(
-                base_options=python.BaseOptions(
-                    model_asset_path="thirdparty/face_landmarker.task"
-                ),
-                output_face_blendshapes=False,
-                num_faces=1,
-                min_face_detection_confidence=0.5,
-            )
-        )
+        # Removed face processor setup
 
         self.pose_processor = mp.solutions.pose.Pose(
             static_image_mode=True, model_complexity=2, min_detection_confidence=0.5
         )
 
-        # Removed hand processor since hand inference is not required.
         self.filters = [OneEuroFilter() for _ in COCO_KEYPOINT_NAMES]
 
     def predict(
