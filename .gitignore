@@ -8,3 +8,5 @@ __pycache__/
 *.mp4
 
 output.json
+
+debug_output.png
