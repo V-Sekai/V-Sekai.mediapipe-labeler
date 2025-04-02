@@ -33,7 +33,6 @@ from datetime import datetime
 from pathlib import Path as PathLib
 
 
-# 1€ Filter Implementation
 class LowPassFilter:
     def __init__(self, alpha: float) -> None:
         self.__setAlpha(alpha)
@@ -106,9 +105,7 @@ class OneEuroFilter:
         return self.__x(x, timestamp, alpha=self.__alpha(cutoff))
 
 
-# MediaPipe Keypoint Configuration
 MEDIAPIPE_KEYPOINT_NAMES = [
-    # Body (33 landmarks)
     "nose",
     "left_eye_inner",
     "left_eye",
@@ -142,7 +139,6 @@ MEDIAPIPE_KEYPOINT_NAMES = [
     "right_heel",
     "left_foot_index",
     "right_foot_index",
-    # Face (12 landmarks)
     "brow_inner_left",
     "brow_inner_right",
     "brow_outer_left",
@@ -220,10 +216,8 @@ class PersonProcessor:
             max_results=max_people,
         )
         detector = vision.ObjectDetector.create_from_options(options)
-
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=image_np)
         detection_result = detector.detect(mp_image)
-
         boxes = []
         h, w = image_np.shape[:2]
 
@@ -233,14 +227,12 @@ class PersonProcessor:
             startY = int(bbox.origin_y)
             endX = int(bbox.origin_x + bbox.width)
             endY = int(bbox.origin_y + bbox.height)
-
             width = endX - startX
             height = endY - startY
             startX = max(0, startX - int(0.2 * width))
             startY = max(0, startY - int(0.2 * height))
             endX = min(w, endX + int(0.2 * width))
             endY = min(h, endY + int(0.2 * height))
-
             boxes.append((startX, startY, endX, endY))
 
         return boxes
@@ -254,12 +246,10 @@ class PersonProcessor:
     ):
         (startX, startY, endX, endY) = box
         orig_h, orig_w = original_size
-
         h, w = crop.shape[:2]
         scale = 640 / max(w, h)
         new_w, new_h = int(w * scale), int(h * scale)
         resized = cv2.resize(crop, (new_w, new_h))
-
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=resized)
 
         try:
@@ -297,46 +287,38 @@ class PersonProcessor:
                         )
                     )
 
-        mapped_face = None
+        mapped_face = []
         if face_result.face_landmarks:
-            mapped_face = []
-            for lmk in face_result.face_landmarks[0]:
-                mapped_face.append(
+            mapped_face = [
+                Landmark(
+                    x=map_x(lmk.x * new_w) / orig_w,
+                    y=map_y(lmk.y * new_h) / orig_h,
+                    z=map_z(lmk.z),
+                )
+                for lmk in face_result.face_landmarks[0]
+            ]
+
+        left_hand, right_hand = None, None
+        if hand_result.hand_landmarks:
+            for idx, handedness in enumerate(hand_result.handedness):
+                hand = [
                     Landmark(
                         x=map_x(lmk.x * new_w) / orig_w,
                         y=map_y(lmk.y * new_h) / orig_h,
                         z=map_z(lmk.z),
                     )
-                )
-
-        left_hand, right_hand = None, None
-        if hand_result.hand_landmarks:
-            for idx, handedness in enumerate(hand_result.handedness):
-                hand = []
-                for lmk in hand_result.hand_landmarks[idx]:
-                    hand.append(
-                        Landmark(
-                            x=map_x(lmk.x * new_w) / orig_w,
-                            y=map_y(lmk.y * new_h) / orig_h,
-                            z=map_z(lmk.z),
-                        )
-                    )
+                    for lmk in hand_result.hand_landmarks[idx]
+                ]
                 if handedness[0].display_name == "Left":
                     left_hand = hand
                 else:
                     right_hand = hand
 
-        blendshapes = []
-        if face_result.face_blendshapes:
-            blendshapes = face_result.face_blendshapes[0]
-
+        blendshapes = (
+            face_result.face_blendshapes[0] if face_result.face_blendshapes else []
+        )
         return FullBodyProcessor.process_results(
-            mapped_pose,
-            mapped_face,
-            blendshapes,
-            left_hand,
-            right_hand,
-            original_size,
+            mapped_pose, mapped_face, blendshapes, left_hand, right_hand, original_size
         )
 
 
@@ -509,7 +491,6 @@ class FullBodyProcessor:
             61: 43,
             291: 44,
         }
-
         if face:
             for mp_idx, body_id in facial_map.items():
                 if mp_idx < len(face):
@@ -571,7 +552,6 @@ class FullBodyProcessor:
 class Predictor(BasePredictor):
     def setup(self):
         os.makedirs("thirdparty", exist_ok=True)
-
         models = [
             (
                 "ssd_mobilenet_v2.tflite",
@@ -643,14 +623,10 @@ class Predictor(BasePredictor):
             default=100,
         ),
         frame_sample_rate: int = Input(
-            description="Process every nth frame for video input",
-            ge=1,
-            default=1,
+            description="Process every nth frame for video input", ge=1, default=1
         ),
     ) -> Output:
-        media_type = "image"
         if str(media_path).lower().endswith((".mp4", ".avi", ".mov", ".mkv", ".webm")):
-            media_type = "video"
             return self.process_video(media_path, max_people, frame_sample_rate)
         else:
             return self.process_image(media_path, max_people)
@@ -666,18 +642,19 @@ class Predictor(BasePredictor):
         for person_id, box in enumerate(boxes):
             startX, startY, endX, endY = box
             crop = img_np[startY:endY, startX:endX]
-
             if crop.size == 0:
                 continue
 
             person_result = PersonProcessor.process_crop(
                 crop, box, (original_h, original_w), self
             )
-
             if person_result:
-                person_result["person_id"] = person_id
-                person_result["box"] = box
+                person_result.update({"person_id": person_id, "box": box})
                 all_results.append(person_result)
+
+        annotated_frame = self.annotate_video_frame(img_np, all_results)
+        debug_path = "/tmp/debug_output.jpg"
+        Image.fromarray(annotated_frame).save(debug_path)
 
         return Output(
             mediapipe_keypoints=json.dumps(
@@ -687,7 +664,7 @@ class Predictor(BasePredictor):
             fullbody_data=json.dumps(
                 {"people": [r["fullbody"] for r in all_results]}, indent=2
             ),
-            debug_media=self.create_debug_image(img_np, all_results),
+            debug_media=Path(debug_path),
             hand_landmarks=json.dumps([r["hands"] for r in all_results])
             if any(r["hands"] for r in all_results)
             else None,
@@ -725,7 +702,6 @@ class Predictor(BasePredictor):
             ret, frame = cap.read()
             if not ret:
                 break
-
             progress.update(1)
 
             if frame_count % frame_sample_rate != 0:
@@ -739,17 +715,14 @@ class Predictor(BasePredictor):
             for person_id, box in enumerate(boxes):
                 startX, startY, endX, endY = box
                 crop = img_np[startY:endY, startX:endX]
-
                 if crop.size == 0:
                     continue
 
                 person_result = PersonProcessor.process_crop(
                     crop, box, (height, width), self
                 )
-
                 if person_result:
-                    person_result["person_id"] = person_id
-                    person_result["box"] = box
+                    person_result.update({"person_id": person_id, "box": box})
                     all_results.append(person_result)
 
             if all_results:
@@ -760,10 +733,7 @@ class Predictor(BasePredictor):
 
                 for i in range(0, len(keypoints), 3):
                     kp_idx = i // 3
-                    x = keypoints[i]
-                    y = keypoints[i + 1]
-                    vis = keypoints[i + 2]
-
+                    x, y, vis = keypoints[i], keypoints[i + 1], keypoints[i + 2]
                     if vis > 0:
                         keypoints[i] = self.filters_x[kp_idx](x, timestamp)
                         keypoints[i + 1] = self.filters_y[kp_idx](y, timestamp)
@@ -772,7 +742,6 @@ class Predictor(BasePredictor):
 
             annotated_frame = self.annotate_video_frame(img_np, all_results)
             out.write(cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR))
-
             frame_results.append(
                 {
                     "mediapipe": self.aggregate_mediapipe(all_results, width, height),
@@ -799,8 +768,7 @@ class Predictor(BasePredictor):
                 {"frames": [{"people": f["facs"]} for f in frame_results]}, indent=2
             ),
             fullbody_data=json.dumps(
-                {"frames": [{"people": f["fullbody"]} for f in frame_results]},
-                indent=2,
+                {"frames": [{"people": f["fullbody"]} for f in frame_results]}, indent=2
             ),
             hand_landmarks=json.dumps([f["hands"] for f in frame_results], indent=2),
             debug_media=Path(debug_video_path),
@@ -814,37 +782,8 @@ class Predictor(BasePredictor):
         draw = ImageDraw.Draw(annotated)
         colors = {
             "green": (0, 255, 0),
-            "blue": (255, 0, 0),
             "red": (0, 0, 255),
             "orange": (255, 165, 0),
-            "yellow": (255, 255, 0),
-            "magenta": (255, 0, 255),
-        }
-
-        for result in results:
-            startX, startY, endX, endY = result["box"]
-            draw.rectangle(
-                [(startX, startY), (endX, endY)], outline=colors["green"], width=2
-            )
-
-            keypoints = result["fullbody"]["keypoints"]
-            self.draw_skeleton(draw, keypoints, colors)
-
-            label = f"Person {result['person_id']}"
-            draw.text((startX, startY - 20), label, fill=colors["green"])
-
-        return np.array(annotated)
-
-    def create_debug_image(self, img_np: np.ndarray, all_results: list) -> Path:
-        annotated = Image.fromarray(img_np)
-        draw = ImageDraw.Draw(annotated)
-        colors = {
-            "green": (0, 255, 0),
-            "blue": (255, 0, 0),
-            "red": (0, 0, 255),
-            "orange": (255, 165, 0),
-            "yellow": (255, 255, 0),
-            "magenta": (255, 0, 255),
         }
 
         try:
@@ -852,25 +791,25 @@ class Predictor(BasePredictor):
         except:
             font = ImageFont.load_default()
 
-        for result in all_results:
+        for result in results:
             startX, startY, endX, endY = result["box"]
             draw.rectangle(
                 [(startX, startY), (endX, endY)], outline=colors["green"], width=2
+            )
+            draw.text(
+                (startX, startY - 20),
+                f"Person {result['person_id']}",
+                fill=colors["green"],
+                font=font,
             )
 
             keypoints = result["fullbody"]["keypoints"]
             self.draw_skeleton(draw, keypoints, colors)
 
-            label = f"Person {result['person_id']}"
-            draw.text((startX, startY - 20), label, fill=colors["green"], font=font)
-
-        debug_path = "/tmp/debug_output.jpg"
-        annotated.save(debug_path)
-        return Path(debug_path)
+        return np.array(annotated)
 
     def draw_skeleton(self, draw, keypoints, colors):
         kp_dict = {kp["id"]: kp for kp in keypoints}
-
         for connection in FullBodyProcessor.SKELETON_CONNECTIONS:
             if connection[0] in kp_dict and connection[1] in kp_dict:
                 parent = kp_dict[connection[0]]
@@ -886,8 +825,7 @@ class Predictor(BasePredictor):
                 continue
             x, y = kp["position"][0], kp["position"][1]
             bbox = [(x - 4, y - 4), (x + 4, y + 4)]
-            color = colors["red"]
-            draw.ellipse(bbox, fill=color, outline=None)
+            draw.ellipse(bbox, fill=colors["red"], outline=None)
 
     def aggregate_mediapipe(self, results, width, height):
         annotations = []
