@@ -1,0 +1,1 @@
+ yt-dlp -f "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]" --merge-output-format mp4 --postprocessor-args "-t 00:00:01" https://youtu.be/75izBsrw-sw?si=yWZKuHLONZkTIORwa
