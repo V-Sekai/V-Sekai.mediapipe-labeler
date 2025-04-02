@@ -156,7 +156,6 @@ class Predictor(BasePredictor):
 
         return {
             "keypoints": keypoints,
-            "bbox": self.calculate_bbox(keypoints),
             "annotations": [
                 {
                     "id": idx,
@@ -167,23 +166,6 @@ class Predictor(BasePredictor):
                 for idx in range(17)
             ],
         }
-
-    def calculate_bbox(self, keypoints):
-        valid = [
-            (keypoints[i], keypoints[i + 1])
-            for i in range(0, len(keypoints), 3)
-            if keypoints[i + 2] > 0
-        ]
-        return (
-            [
-                min(x for x, y in valid),
-                min(y for x, y in valid),
-                max(x for x, y in valid) - min(x for x, y in valid),
-                max(y for x, y in valid) - min(y for x, y in valid),
-            ]
-            if valid
-            else [0] * 4
-        )
 
     def format_coco(self, results, width, height):
         return {
@@ -206,8 +188,6 @@ class Predictor(BasePredictor):
                     "iscrowd": 0,
                     "keypoints": r["keypoints"],
                     "num_keypoints": sum(1 for k in r["keypoints"][2::3] if k > 0),
-                    "bbox": r["bbox"],
-                    "area": width * height,
                 }
                 for i, r in enumerate(results)
             ],
