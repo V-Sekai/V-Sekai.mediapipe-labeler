@@ -773,36 +773,6 @@ class Predictor(BasePredictor):
             media_type="image",
         )
 
-    # In the Predictor class's process_video method:
-    def process_video(
-        self, video_path: Path, max_people: int, frame_sample_rate: int
-    ) -> Output:
-        # [Existing video processing code...]
-
-        # After processing all frames but before conversion:
-        frame_count = 0
-        processed_count = 0
-        frame_results = []
-
-        # [Keep existing processing loop...]
-
-        # After closing video writer and before return:
-        return Output(
-            coco_keypoints=json.dumps([f["coco"] for f in frame_results], indent=2),
-            facs=json.dumps(
-                {"frames": [{"people": f["facs"]} for f in frame_results]}, indent=2
-            ),
-            fullbodyfacs=json.dumps(
-                {"frames": [{"people": f["fullbodyfacs"]} for f in frame_results]},
-                indent=2,
-            ),
-            hand_landmarks=json.dumps([f["hands"] for f in frame_results], indent=2),
-            debug_media=Path(final_video_path),
-            num_people=max(f["num_people"] for f in frame_results),
-            media_type="video",
-            total_frames=processed_count,
-        )
-
     def process_video(
         self, video_path: Path, max_people: int, frame_sample_rate: int
     ) -> Output:
