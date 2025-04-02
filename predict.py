@@ -20,7 +20,6 @@ from PIL import ImageDraw, ImageFont
 import math
 import numpy as np
 import os
-os.environ['GLOG_minloglevel'] = '2' 
 import sys
 import urllib.request
 import mediapipe as mp
@@ -195,7 +194,8 @@ class PersonProcessor:
         image_np: np.ndarray, max_people: int
     ) -> List[Tuple[int, int, int, int]]:
         base_options = python.BaseOptions(
-            model_asset_path="thirdparty/ssd_mobilenet_v2.tflite"
+            model_asset_path="thirdparty/ssd_mobilenet_v2.tflite",
+            delegate=python.BaseOptions.Delegate.CPU,
         )
         options = vision.ObjectDetectorOptions(
             base_options=base_options,
@@ -666,7 +666,8 @@ class Predictor(BasePredictor):
         self.face_processor = vision.FaceLandmarker.create_from_options(
             vision.FaceLandmarkerOptions(
                 base_options=python.BaseOptions(
-                    model_asset_path="thirdparty/face_landmarker.task"
+                    model_asset_path="thirdparty/face_landmarker.task",
+                    delegate=python.BaseOptions.Delegate.CPU
                 ),
                 output_face_blendshapes=True,
                 num_faces=1,
@@ -686,7 +687,8 @@ class Predictor(BasePredictor):
         self.hand_processor = vision.HandLandmarker.create_from_options(
             vision.HandLandmarkerOptions(
                 base_options=python.BaseOptions(
-                    model_asset_path="thirdparty/hand_landmarker.task"
+                    model_asset_path="thirdparty/hand_landmarker.task",
+                    delegate=python.BaseOptions.Delegate.CPU,
                 ),
                 num_hands=2,
                 min_hand_detection_confidence=0.5,
