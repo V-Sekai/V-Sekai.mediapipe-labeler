@@ -979,25 +979,34 @@ class Predictor(BasePredictor):
     def draw_skeleton(self, draw, keypoints, colors):
         kp_dict = {kp["id"]: kp for kp in keypoints}
         connections = []
+        
+        # First draw connections
         for kp in keypoints:
             parent_id = kp.get("parent", -1)
-            if parent_id != -1 and parent_id in kp_dict:
+            if parent_id in kp_dict:
                 parent = kp_dict[parent_id]
                 connections.append((parent, kp))
 
+        # Draw connections in orange
         for parent, child in connections:
-            parent_vis = parent.get("visibility", 1.0)
-            child_vis = child.get("visibility", 1.0)
-            if parent_vis < 0.5 or child_vis < 0.5:
+            if parent.get("visibility", 1) < 0.5 or child.get("visibility", 1) < 0.5:
                 continue
             x1, y1 = parent["position"][0], parent["position"][1]
             x2, y2 = child["position"][0], child["position"][1]
             draw.line([(x1, y1), (x2, y2)], fill=colors["orange"], width=2)
 
+        # Draw keypoints with proper separation
         for kp in keypoints:
             x, y = kp["position"][0], kp["position"][1]
-            bbox = [(x - 4, y - 4), (x + 4, y + 4)]
-            color = colors["blue"] if kp["id"] < 33 else colors["red"]
+            bbox = [(x-4, y-4), (x+4, y+4)]
+            
+            # Body keypoints (original COCO 0-16)
+            if kp["id"] < 17:
+                color = colors["blue"]
+            # Facial keypoints (COCO 17-28 + custom)
+            else:
+                color = colors["red"]
+            
             draw.ellipse(bbox, fill=color, outline=None)
 
     def aggregate_coco(self, results, width, height):
