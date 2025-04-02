@@ -11,15 +11,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 import cv2
 import json
 import math
 import numpy as np
 from tqdm import tqdm
-import os
 from datetime import datetime
-from typing import List, Dict, Any, Tuple, Optional
+from typing import List, Dict, Any, Optional
 from cog import BasePredictor, Path, BaseModel
 from PIL import Image, ImageDraw
 import mediapipe as mp
@@ -43,7 +41,6 @@ COCO_KEYPOINT_NAMES = [
     "left_ankle",
     "right_ankle",
 ]
-
 COCO_PARENT = {
     0: -1,
     1: 0,
@@ -77,7 +74,10 @@ class Output(BaseModel):
 class Predictor(BasePredictor):
     def setup(self):
         self.pose = mp.solutions.pose.Pose(
-            static_image_mode=True, model_complexity=2, min_detection_confidence=0.5
+            static_image_mode=False,  # Enable tracking between frames
+            model_complexity=2,  # Use highest complexity model
+            min_detection_confidence=0.5,
+            min_tracking_confidence=0.5,  # Maintain tracking confidence
         )
         self.filters = [(OneEuroFilter(), OneEuroFilter()) for _ in COCO_KEYPOINT_NAMES]
 
@@ -101,14 +101,12 @@ class Predictor(BasePredictor):
         cap = cv2.VideoCapture(str(video_path))
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-
         debug_video = cv2.VideoWriter(
             "/tmp/debug.mp4",
             cv2.VideoWriter_fourcc(*"mp4v"),
             cap.get(cv2.CAP_PROP_FPS) / frame_sample,
             (width, height),
         )
-
         frame_results = []
         for frame_idx in tqdm(range(int(cap.get(cv2.CAP_PROP_FRAME_COUNT)))):
             ret, frame = cap.read()
@@ -118,7 +116,6 @@ class Predictor(BasePredictor):
             results = self.detect_poses(frame)
             debug_video.write(self.debug_image(frame, results))
             frame_results.append(results)
-
         cap.release()
         debug_video.release()
 
@@ -153,7 +150,6 @@ class Predictor(BasePredictor):
             y = lmk.y * img_shape[0]
             vis = 2 if lmk.visibility > 0.5 else 1
             keypoints.extend([x, y, vis])
-
         return {
             "keypoints": keypoints,
             "annotations": [
