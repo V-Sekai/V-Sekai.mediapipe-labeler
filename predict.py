@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import tempfile
 import cv2
 from tqdm import tqdm
 import json
@@ -191,11 +192,11 @@ RIGHT_HAND_VRM_MAPPING = {
 
 
 class Output(BaseModel):
-    mediapipe_keypoints: str
-    blendshapes: str
-    fullbody_data: str
+    mediapipe_keypoints: Path
+    blendshapes: Path
+    fullbody_data: Path
     debug_media: Path
-    hand_landmarks: Optional[str]
+    hand_landmarks: Optional[Path]
     num_people: int
     media_type: str
     total_frames: Optional[int] = None
@@ -660,21 +661,33 @@ class Predictor(BasePredictor):
                 all_results.append(person_result)
 
         annotated_frame = self.annotate_video_frame(img_np, all_results)
-        debug_path = "/tmp/debug_output.jpg"
-        Image.fromarray(annotated_frame).save(debug_path)
+
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False, mode="w") as tmp:
+            json.dump(
+                {
+                    "mediapipe_keypoints": self.aggregate_mediapipe(
+                        all_results, original_w, original_h
+                    ),
+                    "blendshapes": {"people": [r["blendshapes"] for r in all_results]},
+                    "fullbody_data": {"people": [r["fullbody"] for r in all_results]},
+                    "hand_landmarks": [r["hands"] for r in all_results]
+                    if any(r["hands"] for r in all_results)
+                    else None,
+                },
+                tmp,
+            )
+            mediapipe_keypoints_path = Path(tmp.name)
+
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+            Image.fromarray(annotated_frame).save(tmp.name)
+            debug_media_path = Path(tmp.name)
 
         return Output(
-            mediapipe_keypoints=json.dumps(
-                self.aggregate_mediapipe(all_results, original_w, original_h), indent=2
-            ),
-            blendshapes=json.dumps(
-                {"people": [r["blendshapes"] for r in all_results]}, indent=2
-            ),
-            fullbody_data=json.dumps(
-                {"people": [r["fullbody"] for r in all_results]}, indent=2
-            ),
-            debug_media=Path(debug_path),
-            hand_landmarks=json.dumps([r["hands"] for r in all_results])
+            mediapipe_keypoints=mediapipe_keypoints_path,
+            blendshapes=mediapipe_keypoints_path,
+            fullbody_data=mediapipe_keypoints_path,
+            debug_media=debug_media_path,
+            hand_landmarks=mediapipe_keypoints_path
             if any(r["hands"] for r in all_results)
             else None,
             num_people=len(all_results),
@@ -759,19 +772,28 @@ class Predictor(BasePredictor):
         cap.release()
         out.release()
 
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False, mode="w") as tmp:
+            json.dump(
+                {
+                    "mediapipe_keypoints": [f["mediapipe"] for f in frame_results],
+                    "blendshapes": {
+                        "frames": [{"people": f["blendshapes"]} for f in frame_results]
+                    },
+                    "fullbody_data": {
+                        "frames": [{"people": f["fullbody"]} for f in frame_results]
+                    },
+                    "hand_landmarks": [f["hands"] for f in frame_results],
+                },
+                tmp,
+            )
+            mediapipe_keypoints_path = Path(tmp.name)
+
         return Output(
-            mediapipe_keypoints=json.dumps(
-                [f["mediapipe"] for f in frame_results], indent=2
-            ),
-            blendshapes=json.dumps(
-                {"frames": [{"people": f["blendshapes"]} for f in frame_results]},
-                indent=2,
-            ),
-            fullbody_data=json.dumps(
-                {"frames": [{"people": f["fullbody"]} for f in frame_results]}, indent=2
-            ),
-            hand_landmarks=json.dumps([f["hands"] for f in frame_results], indent=2),
+            mediapipe_keypoints=mediapipe_keypoints_path,
+            blendshapes=mediapipe_keypoints_path,
+            fullbody_data=mediapipe_keypoints_path,
             debug_media=Path(debug_video_path),
+            hand_landmarks=mediapipe_keypoints_path,
             num_people=max(f["num_people"] for f in frame_results),
             media_type="video",
             total_frames=processed_count,
