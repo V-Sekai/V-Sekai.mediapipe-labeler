@@ -727,7 +727,7 @@ class Predictor(BasePredictor):
         ),
     ) -> Output:
         media_type = "image"
-        if str(media_path).lower().endswith((".mp4", ".avi", ".mov", ".mkv", ".webm")):
+        if str(media_path).lower().endswith((".mp4", ".avi", ".mov", ".mkv", ".webm", ".mpv")):
             media_type = "video"
             return self.process_video(media_path, max_people, frame_sample_rate)
         else:
@@ -910,6 +910,8 @@ class Predictor(BasePredictor):
             debug_media=Path(final_video_path),
             hand_landmarks=json.dumps([f["hands"] for f in frame_results], indent=2),
             num_people=max_people_detected,
+            media_type="video",
+            total_frames=processed_count,
         )
 
     def annotate_video_frame(self, frame: np.ndarray, results: list) -> np.ndarray:
