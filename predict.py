@@ -540,6 +540,7 @@ class Predictor(BasePredictor):
                 print(f"Downloading {filename}...")
                 urllib.request.urlretrieve(url, path)
 
+        # Initialize face processor and get blendshape names
         self.face_processor = vision.FaceLandmarker.create_from_options(
             vision.FaceLandmarkerOptions(
                 base_options=python.BaseOptions(
@@ -548,18 +549,25 @@ class Predictor(BasePredictor):
                 output_face_blendshapes=True,
                 num_faces=1,
                 min_face_detection_confidence=0.5,
-                min_face_presence_confidence=0.5,
-                min_tracking_confidence=0.5,
             )
         )
+        dummy_image = mp.Image(
+            image_format=mp.ImageFormat.SRGB,
+            data=np.zeros((100, 100, 3), dtype=np.uint8),
+        )
+        face_result = self.face_processor.detect(dummy_image)
+        self.blendshape_names = (
+            [bs.category_name for bs in face_result.face_blendshapes[0]]
+            if face_result.face_blendshapes
+            else []
+        )
 
+        # Initialize pose and hand processors
         self.pose_processor = mp.solutions.pose.Pose(
             static_image_mode=True,
             model_complexity=2,
             min_detection_confidence=0.5,
-            smooth_landmarks=True,
         )
-
         self.hand_processor = vision.HandLandmarker.create_from_options(
             vision.HandLandmarkerOptions(
                 base_options=python.BaseOptions(
@@ -567,18 +575,49 @@ class Predictor(BasePredictor):
                 ),
                 num_hands=2,
                 min_hand_detection_confidence=0.5,
-                min_hand_presence_confidence=0.5,
-                min_tracking_confidence=0.5,
             )
         )
 
+        # Initialize filters
+        self.initialize_filters()
+
+    def initialize_filters(self):
+        # Body and face keypoints (45 total)
         num_keypoints = len(MEDIAPIPE_KEYPOINT_NAMES)
-        self.filters_x = [
-            OneEuroFilter(30, 1.0, 0.7, 1.0) for _ in range(num_keypoints)
+        self.keypoint_filters = [
+            {
+                "x": OneEuroFilter(30, 1.0, 0.7, 1.0),
+                "y": OneEuroFilter(30, 1.0, 0.7, 1.0),
+                "z": OneEuroFilter(30, 1.0, 0.7, 1.0),
+                "vis": OneEuroFilter(30, 1.0, 0.7, 1.0),
+            }
+            for _ in range(num_keypoints)
         ]
-        self.filters_y = [
-            OneEuroFilter(30, 1.0, 0.7, 1.0) for _ in range(num_keypoints)
-        ]
+
+        # Blendshapes
+        self.blendshape_filters = {
+            name: OneEuroFilter(30, 1.0, 0.7, 1.0) for name in self.blendshape_names
+        }
+
+        # Hands (21 landmarks per hand, 3 coordinates each)
+        self.hand_filters = {
+            "left": [
+                {
+                    "x": OneEuroFilter(30, 1.0, 0.7, 1.0),
+                    "y": OneEuroFilter(30, 1.0, 0.7, 1.0),
+                    "z": OneEuroFilter(30, 1.0, 0.7, 1.0),
+                }
+                for _ in range(21)
+            ],
+            "right": [
+                {
+                    "x": OneEuroFilter(30, 1.0, 0.7, 1.0),
+                    "y": OneEuroFilter(30, 1.0, 0.7, 1.0),
+                    "z": OneEuroFilter(30, 1.0, 0.7, 1.0),
+                }
+                for _ in range(21)
+            ],
+        }
 
     def predict(
         self,
@@ -696,18 +735,8 @@ class Predictor(BasePredictor):
 
             if all_results:
                 main_person = all_results[0]
-                mediapipe_ann = main_person["mediapipe"]["annotations"][0]
-                keypoints = mediapipe_ann["keypoints"]
                 timestamp = frame_count / fps if fps > 0 else 0
-
-                for i in range(0, len(keypoints), 3):
-                    kp_idx = i // 3
-                    x, y, vis = keypoints[i], keypoints[i + 1], keypoints[i + 2]
-                    if vis > 0:
-                        keypoints[i] = self.filters_x[kp_idx](x, timestamp)
-                        keypoints[i + 1] = self.filters_y[kp_idx](y, timestamp)
-
-                mediapipe_ann["keypoints"] = keypoints
+                self.apply_filters(main_person, timestamp)
 
             annotated_frame = self.annotate_video_frame(img_np, all_results)
             out.write(cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR))
@@ -746,6 +775,43 @@ class Predictor(BasePredictor):
             media_type="video",
             total_frames=processed_count,
         )
+
+    def apply_filters(self, person_data, timestamp):
+        # Filter keypoints
+        for kp in person_data["fullbody"]["keypoints"]:
+            kp_id = kp["id"]
+            if kp_id >= len(self.keypoint_filters):
+                continue
+
+            x, y, z = kp["position"]
+            vis = kp["visibility"]
+
+            kp["position"] = [
+                self.keypoint_filters[kp_id]["x"](x, timestamp),
+                self.keypoint_filters[kp_id]["y"](y, timestamp),
+                self.keypoint_filters[kp_id]["z"](z, timestamp),
+            ]
+            kp["visibility"] = self.keypoint_filters[kp_id]["vis"](vis, timestamp)
+
+        # Filter blendshapes
+        filtered_blendshapes = []
+        for bs in person_data["blendshapes"]:
+            name = bs["name"]
+            if name in self.blendshape_filters:
+                filtered_score = self.blendshape_filters[name](bs["score"], timestamp)
+                filtered_blendshapes.append({"name": name, "score": filtered_score})
+        person_data["blendshapes"] = filtered_blendshapes
+
+        # Filter hands
+        for hand_type in ["left", "right"]:
+            hand = person_data["hands"].get(hand_type, [])
+            for idx, landmark in enumerate(hand):
+                if idx >= 21:
+                    continue
+                filters = self.hand_filters[hand_type][idx]
+                landmark["x"] = filters["x"](landmark["x"], timestamp)
+                landmark["y"] = filters["y"](landmark["y"], timestamp)
+                landmark["z"] = filters["z"](landmark["z"], timestamp)
 
     def annotate_video_frame(self, frame: np.ndarray, results: list) -> np.ndarray:
         annotated = Image.fromarray(frame)
