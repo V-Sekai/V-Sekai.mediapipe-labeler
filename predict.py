@@ -569,7 +569,7 @@ class Predictor(BasePredictor):
         self.pose_processor = mp.solutions.pose.Pose(
             static_image_mode=False,
             model_complexity=2,
-            min_detection_confidence=0.5,
+            min_detection_confidence=0.3,
         )
         self.hand_processor = vision.HandLandmarker.create_from_options(
             vision.HandLandmarkerOptions(
