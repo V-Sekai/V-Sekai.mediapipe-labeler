@@ -2,9 +2,5 @@ __pycache__/
 .DS_Store
 *.jpg_debug.jpg
 *.jpg_blendshapes.json
-
 .cog/
-
-*.mp4
-
 debug_output.png
