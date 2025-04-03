@@ -33,6 +33,7 @@ from PIL import Image
 from typing import Any, Dict, List, Tuple, Optional, Union
 from datetime import datetime
 from pathlib import Path as PathLib
+import zipfile
 
 
 class LowPassFilter:
@@ -704,14 +705,6 @@ class Predictor(BasePredictor):
         fps = cap.get(cv2.CAP_PROP_FPS)
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
-        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
-            debug_video_path = tmp.name
-
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        out = cv2.VideoWriter(
-            debug_video_path, fourcc, fps / frame_sample_rate, (width, height)
-        )
-
         frame_results = []
         frame_count = 0
         processed_count = 0
@@ -723,113 +716,84 @@ class Predictor(BasePredictor):
             bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]",
         )
 
-        while cap.isOpened():
-            ret, frame = cap.read()
-            if not ret:
-                break
-            progress.update(1)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            while cap.isOpened():
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                progress.update(1)
 
-            if frame_count % frame_sample_rate != 0:
-                frame_count += 1
-                continue
-
-            img_np = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            boxes = PersonProcessor.detect_people(img_np, max_people)
-            all_results = []
-
-            for person_id, box in enumerate(boxes):
-                startX, startY, endX, endY = box
-                crop = img_np[startY:endY, startX:endX]
-                if crop.size == 0:
+                if frame_count % frame_sample_rate != 0:
+                    frame_count += 1
                     continue
 
-                person_result = PersonProcessor.process_crop(
-                    crop, box, (height, width), self
+                img_np = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                boxes = PersonProcessor.detect_people(img_np, max_people)
+                all_results = []
+
+                for person_id, box in enumerate(boxes):
+                    startX, startY, endX, endY = box
+                    crop = img_np[startY:endY, startX:endX]
+                    if crop.size == 0:
+                        continue
+
+                    person_result = PersonProcessor.process_crop(
+                        crop, box, (height, width), self
+                    )
+                    if person_result:
+                        person_result.update({"person_id": person_id, "box": box})
+                        all_results.append(person_result)
+
+                if all_results:
+                    main_person = all_results[0]
+                    timestamp = frame_count / fps if fps > 0 else 0
+                    self.apply_filters(main_person, timestamp)
+
+                annotated_frame = self.annotate_video_frame(img_np, all_results)
+
+                frame_path = os.path.join(temp_dir, f"frame_{frame_count:06d}.png")
+                cv2.imwrite(frame_path, cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR))
+
+                frame_results.append(
+                    {
+                        "mediapipe": self.aggregate_mediapipe(all_results, width, height),
+                        "blendshapes": [r["blendshapes"] for r in all_results],
+                        "fullbody": [r["fullbody"] for r in all_results],
+                        "hands": [r["hands"] for r in all_results],
+                        "num_people": len(all_results),
+                    }
                 )
-                if person_result:
-                    person_result.update({"person_id": person_id, "box": box})
-                    all_results.append(person_result)
 
-            if all_results:
-                main_person = all_results[0]
-                timestamp = frame_count / fps if fps > 0 else 0
-                self.apply_filters(main_person, timestamp)
+                processed_count += 1
+                frame_count += 1
+                progress.set_postfix_str(f"Processed: {processed_count} frames")
 
-            annotated_frame = self.annotate_video_frame(img_np, all_results)
-            out.write(cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR))
-            frame_results.append(
-                {
-                    "mediapipe": self.aggregate_mediapipe(all_results, width, height),
-                    "blendshapes": [r["blendshapes"] for r in all_results],
-                    "fullbody": [r["fullbody"] for r in all_results],
-                    "hands": [r["hands"] for r in all_results],
-                    "num_people": len(all_results),
-                }
-            )
+            progress.close()
+            cap.release()
 
-            processed_count += 1
-            frame_count += 1
-            progress.set_postfix_str(f"Processed: {processed_count} frames")
-
-        progress.close()
-        cap.release()
-        out.release()
-
-        # Add audio to the debug video
-        original_video = VideoFileClip(str(video_path))
-        debug_video = VideoFileClip(debug_video_path)
-        final_video_with_audio = debug_video.with_audio(original_video.audio)
-        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp_final:
-            debug_with_audio_path = tmp_final.name
-        final_video_with_audio.write_videofile(debug_with_audio_path)
-
-        # Convert the video to a widely supported format
-        import subprocess
-
-        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp_final_conv:
-            final_video_path = tmp_final_conv.name
-
-        subprocess.run(
-            [
-                "ffmpeg",
-                "-y",
-                "-i",
-                debug_with_audio_path,
-                "-c:v",
-                "libx264",
-                "-crf",
-                "18",
-                "-c:a",
-                "aac",
-                "-b:a",
-                "128k",
-                final_video_path,
-            ],
-            check=True,
-        )
-
-        with tempfile.NamedTemporaryFile(suffix=".json", delete=False, mode="w") as tmp:
-            json.dump(
-                {
-                    "mediapipe_keypoints": [f["mediapipe"] for f in frame_results],
-                    "blendshapes": {
-                        "frames": [{"people": f["blendshapes"]} for f in frame_results]
+            with tempfile.NamedTemporaryFile(suffix=".json", delete=False, mode="w") as tmp:
+                json.dump(
+                    {
+                        "frames": frame_results,
                     },
-                    "fullbody_data": {
-                        "frames": [{"people": f["fullbody"]} for f in frame_results]
-                    },
-                    "hand_landmarks": [f["hands"] for f in frame_results],
-                },
-                tmp,
-            )
-            mediapipe_keypoints_path = Path(tmp.name)
+                    tmp,
+                )
+                annotation_path = tmp.name
+
+            with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp_zip:
+                zip_path = tmp_zip.name
+                with zipfile.ZipFile(zip_path, "w") as zip_file:
+                    zip_file.write(annotation_path, "annotations.json")
+                    for file in os.listdir(temp_dir):
+                        file_path = os.path.join(temp_dir, file)
+                        zip_file.write(file_path, file)
 
         return Output(
-            mediapipe_keypoints=mediapipe_keypoints_path,
-            blendshapes=mediapipe_keypoints_path,
-            fullbody_data=mediapipe_keypoints_path,
-            debug_media=Path(final_video_path),
-            hand_landmarks=mediapipe_keypoints_path,
+            mediapipe_keypoints=Path(zip_path),
+            blendshapes=Path(zip_path),
+            fullbody_data=Path(zip_path),
+            debug_media=Path(zip_path),
+            hand_landmarks=Path(zip_path),
             num_people=max(f["num_people"] for f in frame_results),
             media_type="video",
             total_frames=processed_count,
