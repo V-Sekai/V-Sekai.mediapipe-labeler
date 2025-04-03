@@ -551,7 +551,7 @@ class Predictor(BasePredictor):
                 ),
                 output_face_blendshapes=True,
                 num_faces=1,
-                min_face_detection_confidence=0.5,
+                min_face_detection_confidence=0.7,
             )
         )
         dummy_image = mp.Image(
@@ -569,7 +569,7 @@ class Predictor(BasePredictor):
         self.pose_processor = mp.solutions.pose.Pose(
             static_image_mode=True,
             model_complexity=2,
-            min_detection_confidence=0.3,
+            min_detection_confidence=0.1,
         )
         self.hand_processor = vision.HandLandmarker.create_from_options(
             vision.HandLandmarkerOptions(
@@ -577,7 +577,7 @@ class Predictor(BasePredictor):
                     model_asset_path="thirdparty/hand_landmarker.task"
                 ),
                 num_hands=2,
-                min_hand_detection_confidence=0.5,
+                min_hand_detection_confidence=0.7,
             )
         )
 
@@ -589,10 +589,10 @@ class Predictor(BasePredictor):
         num_keypoints = len(MEDIAPIPE_KEYPOINT_NAMES)
         self.keypoint_filters = [
             {
-                "x": OneEuroFilter(30, 1.0, 0.7, 1.0),
-                "y": OneEuroFilter(30, 1.0, 0.7, 1.0),
-                "z": OneEuroFilter(30, 1.0, 0.7, 1.0),
-                "vis": OneEuroFilter(30, 1.0, 0.7, 1.0),
+            "x": OneEuroFilter(10, 1.0, 0.7, 1.0),
+            "y": OneEuroFilter(10, 1.0, 0.7, 1.0),
+            "z": OneEuroFilter(10, 1.0, 0.7, 1.0),
+            "vis": OneEuroFilter(10, 1.0, 0.7, 1.0),
             }
             for _ in range(num_keypoints)
         ]
@@ -606,17 +606,17 @@ class Predictor(BasePredictor):
         self.hand_filters = {
             "left": [
                 {
-                    "x": OneEuroFilter(30, 1.0, 0.7, 1.0),
-                    "y": OneEuroFilter(30, 1.0, 0.7, 1.0),
-                    "z": OneEuroFilter(30, 1.0, 0.7, 1.0),
+                    "x": OneEuroFilter(10, 1.0, 0.7, 1.0),
+                    "y": OneEuroFilter(10, 1.0, 0.7, 1.0),
+                    "z": OneEuroFilter(10, 1.0, 0.7, 1.0),
                 }
                 for _ in range(21)
             ],
             "right": [
                 {
-                    "x": OneEuroFilter(30, 1.0, 0.7, 1.0),
-                    "y": OneEuroFilter(30, 1.0, 0.7, 1.0),
-                    "z": OneEuroFilter(30, 1.0, 0.7, 1.0),
+                    "x": OneEuroFilter(10, 1.0, 0.7, 1.0),
+                    "y": OneEuroFilter(10, 1.0, 0.7, 1.0),
+                    "z": OneEuroFilter(10, 1.0, 0.7, 1.0),
                 }
                 for _ in range(21)
             ],
