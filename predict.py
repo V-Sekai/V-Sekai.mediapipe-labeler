@@ -635,7 +635,7 @@ class Predictor(BasePredictor):
             description="Process every nth frame for video input", ge=1, default=1
         ),
     ) -> Output:
-        if str(media_path).lower().endswith((".mp4", ".avi", ".mov", ".mkv", ".webm")):
+        if str(media_path).lower().endswith((".mp4", ".avi", ".mov", ".mkv")):
             return self.process_video(media_path, max_people, frame_sample_rate)
         else:
             return self.process_image(media_path, max_people)
