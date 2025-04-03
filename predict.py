@@ -833,11 +833,8 @@ class Predictor(BasePredictor):
             cap.release()
 
             return Output(
-                mediapipe_keypoints=Path(zip_path),
-                blendshapes=Path(zip_path),
-                fullbody_data=Path(zip_path),
+                annotations=Path(zip_path),
                 debug_media=Path(debug_video_path),
-                hand_landmarks=Path(zip_path),
                 num_people=max(f["num_people"] for f in frame_results),
                 media_type="video",
                 total_frames=processed_count,
