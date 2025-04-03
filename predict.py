@@ -807,7 +807,7 @@ class Predictor(BasePredictor):
         return Output(
             annotations=json_path,
             debug_media=Path(debug_video_path),
-            num_people=max(len(f["annotations"]) for f in json_data["frames"]),
+            num_people=max((len(f["annotations"]) for f in json_data["frames"]), default=0),
             media_type="video",
             total_frames=processed_count,
         )
