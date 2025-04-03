@@ -15,7 +15,7 @@
 import tempfile
 import cv2
 from tqdm import tqdm
-import copy
+import copy, io, zipfile
 import json
 from PIL import ImageDraw, ImageFont
 import math
@@ -191,8 +191,8 @@ RIGHT_HAND_VRM_MAPPING = {
 
 
 class Output(BaseModel):
-    annotations: Path
-    debug_media: Path
+    result_zip: Path  # Main output with training data and annotations
+    debug_zip: Path  # Separate debug visualizations
     num_people: int
     media_type: str
     total_frames: Optional[int] = None
@@ -640,14 +640,17 @@ class Predictor(BasePredictor):
     def process_image(
         self, image_path: Path, max_people: int, test_mode: bool
     ) -> Output:
+        # Load and process image
         img = Image.open(image_path).convert("RGB")
         img_np = np.array(img)
         original_h, original_w = img_np.shape[:2]
 
+        # Detect people
         boxes = PersonProcessor.detect_people(img_np, max_people)
         if test_mode:
             boxes = boxes[:1]
 
+        # Process all detected people
         all_results = []
         for person_id, box in enumerate(boxes[:max_people]):
             startX, startY, endX, endY = box
@@ -657,7 +660,6 @@ class Predictor(BasePredictor):
                 crop, box, (original_h, original_w), self
             )
             if result:
-                # Add box coordinates to the result
                 result.update(
                     {
                         "person_id": person_id,
@@ -666,33 +668,76 @@ class Predictor(BasePredictor):
                 )
                 all_results.append(result)
 
-        # Create annotated debug media
-        annotated_frame = self.annotate_video_frame(img_np, all_results)
+        # Create result ZIP (train + annotations)
+        result_zip_buffer = io.BytesIO()
+        base_name = image_path.stem
 
-        with tempfile.NamedTemporaryFile(
-            suffix=".json", delete=False, mode="w"
-        ) as tmp_json:
-            json_data = {
-                "image": {"width": original_w, "height": original_h},
+        with zipfile.ZipFile(
+            result_zip_buffer, "w", zipfile.ZIP_DEFLATED
+        ) as result_zip:
+            # Add original image to train/
+            img_byte_arr = io.BytesIO()
+            img.save(img_byte_arr, format="PNG")
+            result_zip.writestr(f"train/{base_name}.png", img_byte_arr.getvalue())
+
+            # Build annotations data
+            annotations_data = {
+                "images": [
+                    {
+                        "id": 0,
+                        "file_name": f"{base_name}.png",
+                        "width": original_w,
+                        "height": original_h,
+                        "date_captured": datetime.now().isoformat(),
+                    }
+                ],
                 "annotations": [
                     {
-                        "bbox": r["mediapipe"]["annotations"][0]["bbox"],
-                        "keypoints": r["mediapipe"]["annotations"][0]["keypoints"],
-                        "box": r["box"],
+                        "id": i,
+                        "image_id": 0,
+                        "category_id": 1,
+                        "iscrowd": 0,
+                        "keypoints": res["mediapipe"]["annotations"][0]["keypoints"],
+                        "num_keypoints": res["mediapipe"]["annotations"][0][
+                            "num_keypoints"
+                        ],
+                        "bbox": res["mediapipe"]["annotations"][0]["bbox"],
+                        "area": res["mediapipe"]["annotations"][0]["area"],
                     }
-                    for r in all_results
+                    for i, res in enumerate(all_results)
                 ],
+                "categories": copy.deepcopy(all_results[0]["mediapipe"]["categories"])
+                if all_results
+                else [],
             }
-            json.dump(json_data, tmp_json)
-            annotations_path = Path(tmp_json.name)
 
-        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp_img:
-            Image.fromarray(annotated_frame).save(tmp_img.name)
-            debug_media = Path(tmp_img.name)
+            result_zip.writestr(
+                "annotations/annotations.json", json.dumps(annotations_data, indent=2)
+            )
+
+        # Create debug ZIP
+        debug_zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(debug_zip_buffer, "w", zipfile.ZIP_DEFLATED) as debug_zip:
+            # Generate and add debug visualization
+            annotated_frame = self.annotate_video_frame(img_np, all_results)
+            debug_byte_arr = io.BytesIO()
+            Image.fromarray(annotated_frame).save(debug_byte_arr, format="JPEG")
+            debug_zip.writestr(f"{base_name}_annotated.jpg", debug_byte_arr.getvalue())
+
+        # Write to temporary files
+        with tempfile.NamedTemporaryFile(
+            suffix="_result.zip", delete=False
+        ) as tmp_result:
+            tmp_result.write(result_zip_buffer.getvalue())
+
+        with tempfile.NamedTemporaryFile(
+            suffix="_debug.zip", delete=False
+        ) as tmp_debug:
+            tmp_debug.write(debug_zip_buffer.getvalue())
 
         return Output(
-            annotations=annotations_path,
-            debug_media=debug_media,
+            result_zip=Path(tmp_result.name),
+            debug_zip=Path(tmp_debug.name),
             num_people=len(all_results),
             media_type="image",
         )
@@ -706,108 +751,145 @@ class Predictor(BasePredictor):
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         fps = cap.get(cv2.CAP_PROP_FPS)
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        base_name = video_path.stem
 
-        # Output setup
-        json_data = {
-            "metadata": {
-                "width": width,
-                "height": height,
-                "fps": fps,
-                "frame_sample_rate": frame_sample_rate,
-            },
-            "frames": [],
-        }
+        # Prepare ZIP buffers
+        result_zip_buffer = io.BytesIO()
+        debug_zip_buffer = io.BytesIO()
 
-        # Debug video writer
+        # Video debug writer
         debug_video_path = "annotated_video.mp4"
         debug_writer = cv2.VideoWriter(
             debug_video_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height)
         )
 
+        # Annotation data structure
+        json_data = {
+            "metadata": {
+                "original_width": width,
+                "original_height": height,
+                "original_fps": fps,
+                "frame_sample_rate": frame_sample_rate,
+                "creation_date": datetime.now().isoformat(),
+            },
+            "images": [],
+            "annotations": [],
+            "categories": [],
+        }
+
         frame_count = 0
         processed_count = 0
+        annotation_id = 0
 
-        with tqdm(total=total_frames, desc="Processing Video") as pbar:
-            while cap.isOpened():
-                ret, frame = cap.read()
-                if not ret:
-                    break
+        with zipfile.ZipFile(
+            result_zip_buffer, "w", zipfile.ZIP_DEFLATED
+        ) as result_zip:
+            with tqdm(total=total_frames, desc="Processing Video") as pbar:
+                while cap.isOpened():
+                    ret, frame = cap.read()
+                    if not ret:
+                        break
 
-                if frame_count % frame_sample_rate == 0:
-                    img_np = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    boxes = PersonProcessor.detect_people(img_np, max_people)
+                    if frame_count % frame_sample_rate == 0:
+                        img_np = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                        
+                        # Save frame to result ZIP
+                        frame_filename = f"train/{base_name}_frame{processed_count:06d}.png"
+                        img_byte_arr = io.BytesIO()
+                        Image.fromarray(img_np).save(img_byte_arr, format="PNG")
+                        result_zip.writestr(frame_filename, img_byte_arr.getvalue())
 
-                    frame_raw = []
-                    frame_filtered = []
-
-                    for person_id, box in enumerate(boxes):
-                        # Process raw data
-                        result = PersonProcessor.process_crop(
-                            img_np[box[1] : box[3], box[0] : box[2]],
-                            box,
-                            (height, width),
-                            self,
-                        )
-                        if result:
-                            # Store raw frame data
-                            frame_raw.append(
-                                {
-                                    "box": box,
-                                    "mediapipe": result["mediapipe"],
-                                    "fullbody": result["fullbody"],
-                                }
-                            )
-
-                            # Create filtered copy
-                            filtered = copy.deepcopy(result)
-                            self.apply_filters(filtered, frame_count / fps)
-                            filtered["person_id"] = person_id
-                            filtered["box"] = box
-                            frame_filtered.append(filtered)
-
-                    # Store raw data
-                    json_data["frames"].append(
-                        {
+                        # Add frame metadata
+                        json_data["images"].append({
+                            "id": processed_count,
+                            "file_name": frame_filename.split("/")[-1],
+                            "width": width,
+                            "height": height,
                             "frame_number": frame_count,
                             "timestamp": frame_count / fps,
-                            "annotations": [
-                                {
-                                    "bbox": r["mediapipe"]["annotations"][0]["bbox"],
-                                    "keypoints": r["mediapipe"]["annotations"][0][
-                                        "keypoints"
-                                    ],
-                                    "fullbody": r["fullbody"],
-                                }
-                                for r in frame_raw
+                        })
+
+                        # Process annotations per person
+                        frame_annotations = []
+                        boxes = PersonProcessor.detect_people(img_np, max_people)
+                        for person_id, box in enumerate(boxes):
+                            result = PersonProcessor.process_crop(
+                                img_np[box[1] : box[3], box[0] : box[2]],
+                                box,
+                                (height, width),
+                                self,
+                            )
+                            if result:
+                                # Save full result in frame_annotations for debug use
+                                frame_annotations.append({
+                                    "box": box,
+                                    "mediapipe": result["mediapipe"],
+                                })
+                                ann = result["mediapipe"]["annotations"][0]
+                                json_data["annotations"].append({
+                                    "id": annotation_id,
+                                    "image_id": processed_count,
+                                    "category_id": 1,
+                                    "iscrowd": 0,
+                                    "keypoints": ann["keypoints"],
+                                    "num_keypoints": ann["num_keypoints"],
+                                    "bbox": ann["bbox"],
+                                    "area": ann["area"],
+                                    "person_id": person_id,
+                                    "frame_time": frame_count / fps,
+                                })
+                                annotation_id += 1
+
+                        # Generate and write debug frame using stored annotation info
+                        annotated_frame = self.annotate_video_frame(
+                            img_np,
+                            [
+                                {"box": item["box"], "mediapipe": item["mediapipe"]}
+                                for item in frame_annotations
                             ],
-                        }
-                    )
+                        )
+                        debug_writer.write(cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR))
 
-                    # Generate and write annotated frame
-                    annotated_frame = self.annotate_video_frame(img_np, frame_filtered)
-                    debug_writer.write(cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR))
-                    processed_count += 1
-                    pbar.update(1)
+                        processed_count += 1
+                        pbar.update(1)
 
-                frame_count += 1
-                if test_mode and frame_count >= 5 * frame_sample_rate:
-                    break
+                    frame_count += 1
+                    if test_mode and frame_count >= 5 * frame_sample_rate:
+                        break
 
-        # Cleanup
-        cap.release()
+            # Add final annotations to result ZIP
+            if json_data["annotations"]:
+                # Example: use categories from first annotation if available.
+                json_data["categories"] = copy.deepcopy(
+                    json_data["annotations"][0].get("categories", [])
+                )
+            result_zip.writestr(
+                "annotations/annotations.json", json.dumps(json_data, indent=2)
+            )
+
+        # Finalize debug ZIP
         debug_writer.release()
+        with zipfile.ZipFile(debug_zip_buffer, "w", zipfile.ZIP_DEFLATED) as debug_zip:
+            debug_zip.write(debug_video_path, f"{base_name}_annotated.mp4")
+        os.remove(debug_video_path)
 
-        # Save JSON
-        with tempfile.NamedTemporaryFile(
-            suffix=".json", delete=False, mode="w"
-        ) as tmp_json:
-            json.dump(json_data, tmp_json, indent=2)
-            json_path = Path(tmp_json.name)
+        # Compute max people detected in any frame
+        frame_people = {}
+        for ann in json_data["annotations"]:
+            frame_id = ann["image_id"]
+            frame_people[frame_id] = frame_people.get(frame_id, 0) + 1
+        max_people_detected = max(frame_people.values()) if frame_people else 0
+
+        # Write to temporary files
+        with tempfile.NamedTemporaryFile(suffix="_result.zip", delete=False) as tmp_result:
+            tmp_result.write(result_zip_buffer.getvalue())
+        with tempfile.NamedTemporaryFile(suffix="_debug.zip", delete=False) as tmp_debug:
+            tmp_debug.write(debug_zip_buffer.getvalue())
 
         return Output(
-            annotations=json_path,
-            debug_media=Path(debug_video_path),
-            num_people=max(len(f["annotations"]) for f in json_data["frames"]),
+            result_zip=Path(tmp_result.name),
+            debug_zip=Path(tmp_debug.name),
+            num_people=max_people_detected,
             media_type="video",
             total_frames=processed_count,
         )
