@@ -1,7 +1,3 @@
-from mediapipe.framework.formats import landmark_pb2
-from mediapipe.tasks.python.components.containers import Landmark
-from typing import List, Any
-import mediapipe as mp
 
 MEDIAPIPE_KEYPOINT_NAMES = [
     "nose",
