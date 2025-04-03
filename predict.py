@@ -30,7 +30,6 @@ from mediapipe.tasks.python.components.containers import Landmark
 from cog import BasePredictor, Input, Path, BaseModel
 from PIL import Image
 from typing import Any, List, Tuple, Optional
-import zipfile
 import shutil
 
 
@@ -679,8 +678,8 @@ class Predictor(BasePredictor):
             Image.fromarray(annotated_frame).save(tmp_img.name)
             debug_media = Path(tmp_img.name)
         if export_train:
-            zip_path = self.export_train_zip(annotations_path, [debug_media])
-            debug_media = zip_path
+            folder_path = self.export_train_folder(annotations_path, [debug_media])
+            debug_media = folder_path
         return Output(
             annotations=annotations_path,
             debug_media=debug_media,
@@ -710,6 +709,7 @@ class Predictor(BasePredictor):
             debug_video_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height)
         )
         train_frames = []
+        debug_frames = []  # new list to store annotated frames
         frame_count = 0
         processed_count = 0
         with tqdm(total=total_frames, desc="Processing Video") as pbar:
@@ -730,36 +730,31 @@ class Predictor(BasePredictor):
                             self,
                         )
                         if result:
-                            frame_raw.append(
-                                {
-                                    "box": box,
-                                    "mediapipe": result["mediapipe"],
-                                    "fullbody": result["fullbody"],
-                                }
-                            )
+                            frame_raw.append({
+                                "box": box,
+                                "mediapipe": result["mediapipe"],
+                                "fullbody": result["fullbody"],
+                            })
                             filtered = copy.deepcopy(result)
                             self.apply_filters(filtered, frame_count / fps)
                             filtered["person_id"] = person_id
                             filtered["box"] = box
                             frame_filtered.append(filtered)
-                    json_data["frames"].append(
-                        {
-                            "frame_number": frame_count,
-                            "timestamp": frame_count / fps,
-                            "annotations": [
-                                {
-                                    "bbox": r["mediapipe"]["annotations"][0]["bbox"],
-                                    "keypoints": r["mediapipe"]["annotations"][0][
-                                        "keypoints"
-                                    ],
-                                    "fullbody": r["fullbody"],
-                                }
-                                for r in frame_raw
-                            ],
-                        }
-                    )
+                    json_data["frames"].append({
+                        "frame_number": frame_count,
+                        "timestamp": frame_count / fps,
+                        "annotations": [
+                            {
+                                "bbox": r["mediapipe"]["annotations"][0]["bbox"],
+                                "keypoints": r["mediapipe"]["annotations"][0]["keypoints"],
+                                "fullbody": r["fullbody"],
+                            }
+                            for r in frame_raw
+                        ],
+                    })
                     annotated_frame = self.annotate_video_frame(img_np, frame_filtered)
                     debug_writer.write(cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR))
+                    debug_frames.append(annotated_frame)  # store the annotated frame
                     if export_train:
                         frame_png = Path(tempfile.NamedTemporaryFile(suffix=".png", delete=False).name)
                         Image.fromarray(annotated_frame).save(frame_png)
@@ -771,15 +766,16 @@ class Predictor(BasePredictor):
                     break
         cap.release()
         debug_writer.release()
-        with tempfile.NamedTemporaryFile(
-            suffix=".json", delete=False, mode="w"
-        ) as tmp_json:
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False, mode="w") as tmp_json:
             json.dump(json_data, tmp_json, indent=2)
             json_path = Path(tmp_json.name)
-        debug_media = Path(debug_video_path)
-        if export_train:
-            zip_path = self.export_train_zip(json_path, train_frames)
-            debug_media = zip_path
+        # always recreate debug video from stored frames
+        new_video = "recreated_debug_video.mp4"
+        writer = cv2.VideoWriter(new_video, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
+        for frm in debug_frames:
+            writer.write(cv2.cvtColor(frm, cv2.COLOR_RGB2BGR))
+        writer.release()
+        debug_media = Path(new_video)
         return Output(
             annotations=json_path,
             debug_media=debug_media,
@@ -788,22 +784,16 @@ class Predictor(BasePredictor):
             total_frames=processed_count,
         )
 
-    def export_train_zip(self, json_file: Path, frame_files: list) -> Path:
-        temp_dir = tempfile.mkdtemp()
+    def export_train_folder(self, json_file: Path, frame_files: list) -> Path:
+        temp_dir = tempfile.mkdtemp(prefix="export_train_")
         shutil.copy(json_file, os.path.join(temp_dir, "annotations.json"))
         train_dir = os.path.join(temp_dir, "train")
         os.makedirs(train_dir, exist_ok=True)
         for f in frame_files:
-            shutil.copy(f, os.path.join(train_dir, f.name))
-        zip_path = Path(tempfile.NamedTemporaryFile(suffix=".zip", delete=False).name)
-        with zipfile.ZipFile(zip_path, "w") as zipf:
-            for foldername, subfolders, filenames in os.walk(temp_dir):
-                for filename in filenames:
-                    filepath = os.path.join(foldername, filename)
-                    arcname = os.path.relpath(filepath, temp_dir)
-                    zipf.write(filepath, arcname)
-        shutil.rmtree(temp_dir)
-        return zip_path
+            shutil.copy(f, os.path.join(train_dir, os.path.basename(f)))
+        zip_base = os.path.join(tempfile.gettempdir(), "export_train_archive")
+        zip_path = shutil.make_archive(base_name=zip_base, format='zip', root_dir=temp_dir)
+        return Path(zip_path)
 
     def apply_filters(self, person_data, timestamp):
         for kp in person_data["fullbody"]["keypoints"]:
