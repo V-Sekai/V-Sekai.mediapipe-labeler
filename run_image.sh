@@ -1,3 +1,4 @@
+#!/bin/bash
 media_path="@thirdparty/image.jpg"
 cog predict -i "media_path=$media_path" | \
 tee \
