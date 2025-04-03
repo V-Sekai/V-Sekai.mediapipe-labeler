@@ -784,6 +784,8 @@ class Predictor(BasePredictor):
 
                 frame_results.append(
                     {
+                        "frame_number": frame_count,
+                        "timestamp": frame_count / fps if fps > 0 else 0,
                         "mediapipe": self.aggregate_mediapipe(
                             all_results, width, height
                         ),
@@ -814,14 +816,42 @@ class Predictor(BasePredictor):
                             "date_created": datetime.now().isoformat(),
                         },
                         "licenses": [{"id": 1, "name": "CC-BY-4.0"}],
-                        "images": [],
-                        "annotations": [],
+                        "videos": [
+                            {
+                                "id": 0,
+                                "width": width,
+                                "height": height,
+                                "fps": fps,
+                                "total_frames": processed_count,
+                                "file_name": str(video_path.name),
+                                "date_captured": datetime.now().isoformat(),
+                            }
+                        ],
                         "categories": FullBodyProcessor.create_mediapipe_output(
                             None, None, (0, 0)
                         )["categories"],
+                        "annotations": [
+                            {
+                                "id": idx,
+                                "video_id": 0,
+                                "frame_number": fr["frame_number"],
+                                "timestamp": fr["timestamp"],
+                                "category_id": 1,
+                                "keypoints": ann["keypoints"],
+                                "num_keypoints": ann["num_keypoints"],
+                                "bbox": ann["bbox"],
+                                "area": ann["area"],
+                                "iscrowd": 0,
+                                "blendshapes": fr["blendshapes"],
+                                "hands": fr["hands"],
+                            }
+                            for idx, fr in enumerate(frame_results)
+                            for ann in fr["mediapipe"]["annotations"]
+                        ],
                     },
                     tmp,
                 )
+
                 annotation_path = tmp.name
 
             with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp_zip:
@@ -980,32 +1010,16 @@ class Predictor(BasePredictor):
 
     def aggregate_mediapipe(self, results, width, height):
         annotations = []
-        for idx, res in enumerate(results):
+        for res in results:
             ann = res["mediapipe"]["annotations"][0].copy()
-            ann["id"] = idx
-            annotations.append(ann)
-
-        return {
-            "info": {
-                "description": "MediaPipe Full Body Keypoints",
-                "version": "1.0",
-                "year": 2023,
-                "contributor": "MediaPipe Processor",
-                "date_created": datetime.now().isoformat(),
-            },
-            "licenses": [{"id": 1, "name": "CC-BY-4.0"}],
-            "images": [
+            annotations.append(
                 {
-                    "id": 0,
-                    "width": width,
-                    "height": height,
-                    "file_name": "input.jpg",
-                    "license": 1,
-                    "date_captured": datetime.now().isoformat(),
+                    "keypoints": ann["keypoints"],
+                    "num_keypoints": ann["num_keypoints"],
+                    "bbox": ann["bbox"],
+                    "area": ann["area"],
+                    "category_id": 1,
+                    "iscrowd": 0,
                 }
-            ],
-            "annotations": annotations,
-            "categories": FullBodyProcessor.create_mediapipe_output(None, None, (0, 0))[
-                "categories"
-            ],
-        }
+            )
+        return {"annotations": annotations}
