@@ -752,7 +752,7 @@ class Predictor(BasePredictor):
                 annotated_frame = self.annotate_video_frame(img_np, all_results)
 
                 frame_path = os.path.join(temp_dir, f"frame_{frame_count:06d}.png")
-                cv2.imwrite(frame_path, cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR))
+                cv2.imwrite(frame_path, cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR))
 
                 frame_results.append(
                     {
@@ -774,7 +774,19 @@ class Predictor(BasePredictor):
             with tempfile.NamedTemporaryFile(suffix=".json", delete=False, mode="w") as tmp:
                 json.dump(
                     {
-                        "frames": frame_results,
+                        "info": {
+                            "description": "MediaPipe Full Body Keypoints",
+                            "version": "1.0",
+                            "year": 2023,
+                            "contributor": "MediaPipe Processor",
+                            "date_created": datetime.now().isoformat(),
+                        },
+                        "licenses": [{"id": 1, "name": "CC-BY-4.0"}],
+                        "images": [],
+                        "annotations": [],
+                        "categories": FullBodyProcessor.create_mediapipe_output(None, None, (0, 0))[
+                            "categories"
+                        ],
                     },
                     tmp,
                 )
@@ -783,21 +795,53 @@ class Predictor(BasePredictor):
             with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp_zip:
                 zip_path = tmp_zip.name
                 with zipfile.ZipFile(zip_path, "w") as zip_file:
-                    zip_file.write(annotation_path, "annotations.json")
+                    zip_file.write(annotation_path, "train/annotations.json")
                     for file in os.listdir(temp_dir):
                         file_path = os.path.join(temp_dir, file)
-                        zip_file.write(file_path, file)
+                        zip_file.write(file_path, f"train/{file}")
 
-        return Output(
-            mediapipe_keypoints=Path(zip_path),
-            blendshapes=Path(zip_path),
-            fullbody_data=Path(zip_path),
-            debug_media=Path(zip_path),
-            hand_landmarks=Path(zip_path),
-            num_people=max(f["num_people"] for f in frame_results),
-            media_type="video",
-            total_frames=processed_count,
-        )
+            debug_video_path = "debug_video.mp4"
+            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+            out = cv2.VideoWriter(debug_video_path, fourcc, fps / frame_sample_rate, (width, height))
+            cap = cv2.VideoCapture(str(video_path))
+            frame_count = 0
+            while cap.isOpened():
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                if frame_count % frame_sample_rate != 0:
+                    frame_count += 1
+                    continue
+                img_np = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                boxes = PersonProcessor.detect_people(img_np, max_people)
+                all_results = []
+                for person_id, box in enumerate(boxes):
+                    startX, startY, endX, endY = box
+                    crop = img_np[startY:endY, startX:endX]
+                    if crop.size == 0:
+                        continue
+                    person_result = PersonProcessor.process_crop(
+                        crop, box, (height, width), self
+                    )
+                    if person_result:
+                        person_result.update({"person_id": person_id, "box": box})
+                        all_results.append(person_result)
+                annotated_frame = self.annotate_video_frame(img_np, all_results)
+                out.write(cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR))
+                frame_count += 1
+            out.release()
+            cap.release()
+
+            return Output(
+                mediapipe_keypoints=Path(zip_path),
+                blendshapes=Path(zip_path),
+                fullbody_data=Path(zip_path),
+                debug_media=Path(debug_video_path),
+                hand_landmarks=Path(zip_path),
+                num_people=max(f["num_people"] for f in frame_results),
+                media_type="video",
+                total_frames=processed_count,
+            )
 
     def apply_filters(self, person_data, timestamp):
         # Filter keypoints
