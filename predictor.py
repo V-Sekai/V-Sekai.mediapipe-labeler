@@ -1,7 +1,5 @@
 from cog import BasePredictor, Input, Path
 from mediapipe.tasks.python import vision
-from mediapipe.framework.formats import landmark_pb2
-from mediapipe.tasks.python.components.containers import Landmark
 from PIL import Image
 import numpy as np
 import cv2
@@ -9,7 +7,6 @@ import os
 import tempfile
 import json
 from tqdm import tqdm
-from typing import Optional
 from .filters import OneEuroFilter
 from .processors import PersonProcessor, FullBodyProcessor, MEDIAPIPE_KEYPOINT_NAMES
 

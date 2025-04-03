@@ -1,75 +1,76 @@
+---
 name: CI
-'on':
-  push:
-    branches:
-      - main
-  pull_request:
-    branches:
-      - main
+on:
+    push:
+        branches:
+            - main
+    pull_request:
+        branches:
+            - main
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
-      - name: Setup Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.9'
-      - name: Set up Docker
-        uses: docker/setup-docker-action@v4
-      - name: Setup Cog
-        uses: replicate/setup-cog@v2
-        with:
-          token: '${{ secrets.REPLICATE_CLI_AUTH_TOKEN }}'
-      - name: Run tests (Cog) with video integration
-        run: |
-          media_path="@thirdparty/20250401-0707-12.7226723.mp4"
-          cog predict -i test_mode=True -i "media_path=$media_path" | \
-                  tee \
-                          >(jq -r '.debug_media | split(",")[1]' | base64 -d > debug_output_video.mp4) \
-                          >(jq -r '.mediapipe' > mediapipe_video.json) \
-                          >(jq -r '.fullbody' > fullbody_video.json) \
-                          >(jq -r '.hand_landmarks' > hand_landmarks_video.json) \
-                          >(jq -r '.blendshapes' > blendshapes_video.json) \
-                  >/dev/null
-      - name: Run tests (Cog) with image integration
-        run: |
-          media_path="@thirdparty/image.jpg"
-          cog predict -i "media_path=$media_path" | \
-                  tee \
-                          >(jq -r '.debug_media | split(",")[1]' | base64 -d > debug_output_image.png) \
-                          >(jq -r '.mediapipe' > mediapipe_image.json) \
-                          >(jq -r '.fullbody' > fullbody_image.json) \
-                          >(jq -r '.hand_landmarks' > hand_landmarks_image.json) \
-                          >(jq -r '.blendshapes' > blendshapes_image.json) \
-                  >/dev/null
-      - name: Upload test artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-artifacts
-          path: |
-            debug_output_video.mp4
-            mediapipe_video.json
-            fullbody_video.json
-            hand_landmarks_video.json
-            blendshapes_video.json
-            debug_output_image.png
-            mediapipe_image.json
-            fullbody_image.json
-            hand_landmarks_image.json
-            blendshapes_image.json
-      - name: Check artifact sizes
-        run: |
-          for file in debug_output_video.mp4 mediapipe_video.json fullbody_video.json hand_landmarks_video.json blendshapes_video.json \
-                      debug_output_image.png mediapipe_image.json fullbody_image.json hand_landmarks_image.json blendshapes_image.json; do
-            if [ ! -s "$file" ]; then
-              echo "Error: $file is empty or does not exist."
-              exit 1
-            fi
-          done
-      - name: Push to Replicate
-        if: github.ref == 'refs/heads/main'
-        run: >-
-          cog push
-          r8.im/fire/v-sekai.mediapipe-labeler:9858ca6884ed0bffeae5dd63a0420949b338e8ac6b8167bfcf8d1adce3d8bd92
+    build:
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v3
+            - name: Setup Python
+              uses: actions/setup-python@v4
+              with:
+                  python-version: '3.9'
+            - name: Set up Docker
+              uses: docker/setup-docker-action@v4
+            - name: Setup Cog
+              uses: replicate/setup-cog@v2
+              with:
+                  token: ${{ secrets.REPLICATE_CLI_AUTH_TOKEN }}
+            - name: Run tests (Cog) with video integration
+              run: |
+                  media_path="@thirdparty/20250401-0707-12.7226723.mp4"
+                  cog predict -i test_mode=True -i "media_path=$media_path" | \
+                          tee \
+                                  >(jq -r '.debug_media | split(",")[1]' | base64 -d > debug_output_video.mp4) \
+                                  >(jq -r '.mediapipe' > mediapipe_video.json) \
+                                  >(jq -r '.fullbody' > fullbody_video.json) \
+                                  >(jq -r '.hand_landmarks' > hand_landmarks_video.json) \
+                                  >(jq -r '.blendshapes' > blendshapes_video.json) \
+                          >/dev/null
+            - name: Run tests (Cog) with image integration
+              run: |
+                  media_path="@thirdparty/image.jpg"
+                  cog predict -i "media_path=$media_path" | \
+                          tee \
+                                  >(jq -r '.debug_media | split(",")[1]' | base64 -d > debug_output_image.png) \
+                                  >(jq -r '.mediapipe' > mediapipe_image.json) \
+                                  >(jq -r '.fullbody' > fullbody_image.json) \
+                                  >(jq -r '.hand_landmarks' > hand_landmarks_image.json) \
+                                  >(jq -r '.blendshapes' > blendshapes_image.json) \
+                          >/dev/null
+            - name: Upload test artifacts
+              uses: actions/upload-artifact@v4
+              with:
+                  name: test-artifacts
+                  path: |
+                      debug_output_video.mp4
+                      mediapipe_video.json
+                      fullbody_video.json
+                      hand_landmarks_video.json
+                      blendshapes_video.json
+                      debug_output_image.png
+                      mediapipe_image.json
+                      fullbody_image.json
+                      hand_landmarks_image.json
+                      blendshapes_image.json
+            - name: Check artifact sizes
+              run: |
+                  for file in debug_output_video.mp4 mediapipe_video.json fullbody_video.json hand_landmarks_video.json blendshapes_video.json \
+                              debug_output_image.png mediapipe_image.json fullbody_image.json hand_landmarks_image.json blendshapes_image.json; do
+                    if [ ! -s "$file" ]; then
+                      echo "Error: $file is empty or does not exist."
+                      exit 1
+                    fi
+                  done
+            - name: Push to Replicate
+              if: github.ref == 'refs/heads/main'
+              run: >-
+                  cog push
+                  r8.im/fire/v-sekai.mediapipe-labeler:9858ca6884ed0bffeae5dd63a0420949b338e8ac6b8167bfcf8d1adce3d8bd92

@@ -1,9 +1,3 @@
-import cv2
-import numpy as np
-from mediapipe.framework.formats import landmark_pb2
-from mediapipe.tasks.python.components.containers import Landmark
-from typing import List, Tuple, Any
-import mediapipe as mp
 
 
 MEDIAPIPE_KEYPOINT_NAMES = [
