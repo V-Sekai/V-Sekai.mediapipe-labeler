@@ -501,7 +501,7 @@ class FullBodyProcessor:
                     "index": idx,
                     "x": lmk.x,
                     "y": lmk.y,
-                    "z": lmk.z,  # Fixed: Added z-coordinate
+                    "z": lmk.z,
                     "name": ("left_wrist" if is_left else "right_wrist")
                     if idx == 0
                     else (
@@ -583,7 +583,6 @@ class Predictor(BasePredictor):
         self.initialize_filters()
 
     def initialize_filters(self):
-        # Body and face keypoints (45 total)
         num_keypoints = len(MEDIAPIPE_KEYPOINT_NAMES)
         self.keypoint_filters = [
             {
@@ -595,12 +594,10 @@ class Predictor(BasePredictor):
             for _ in range(num_keypoints)
         ]
 
-        # Blendshapes
         self.blendshape_filters = {
             name: OneEuroFilter(30, 1.0, 0.7, 1.0) for name in self.blendshape_names
         }
 
-        # Hands (21 landmarks per hand, 3 coordinates each)
         self.hand_filters = {
             "left": [
                 {
@@ -632,32 +629,62 @@ class Predictor(BasePredictor):
         frame_sample_rate: int = Input(
             description="Process every nth frame for video input", ge=1, default=1
         ),
+        test_mode: bool = Input(
+            description="Enable test mode for quick verification", default=False
+        ),
     ) -> Output:
         if str(media_path).lower().endswith((".mp4", ".avi", ".mov", ".mkv")):
-            return self.process_video(media_path, max_people, frame_sample_rate)
+            return self.process_video(
+                media_path, max_people, frame_sample_rate, test_mode
+            )
         else:
-            return self.process_image(media_path, max_people)
+            return self.process_image(media_path, max_people, test_mode)
 
-    def process_image(self, image_path: Path, max_people: int) -> Output:
-        img = Image.open(image_path).convert("RGB")
-        img_np = np.array(img)
+    def process_image(
+        self, image_path: Path, max_people: int, test_mode: bool
+    ) -> Output:
+        if test_mode:
+            # Generate test image
+            img_np = np.zeros((128, 128, 3), dtype=np.uint8)
+            img_np[32:96, 32:96] = [255, 255, 255]  # White square
+            max_people = 1
+            print("Test mode: Using generated test image")
+        else:
+            img = Image.open(image_path).convert("RGB")
+            img_np = np.array(img)
         original_h, original_w = img_np.shape[:2]
 
         boxes = PersonProcessor.detect_people(img_np, max_people)
-        all_results = []
+        if test_mode:
+            boxes = boxes[:1]  # Only process first detection
+            print("Test mode: Processing 1 person with minimal analysis")
 
+        all_results = []
         for person_id, box in enumerate(boxes):
             startX, startY, endX, endY = box
             crop = img_np[startY:endY, startX:endX]
             if crop.size == 0:
                 continue
 
-            person_result = PersonProcessor.process_crop(
-                crop, box, (original_h, original_w), self
-            )
-            if person_result:
-                person_result.update({"person_id": person_id, "box": box})
-                all_results.append(person_result)
+            if test_mode:
+                # Minimal processing for test mode
+                result = {
+                    "mediapipe": {"annotations": [{"id": 0}]},
+                    "blendshapes": [],
+                    "fullbody": {"keypoints": []},
+                    "hands": {},
+                    "box": box,
+                    "person_id": person_id,
+                }
+            else:
+                result = PersonProcessor.process_crop(
+                    crop, box, (original_h, original_w), self
+                )
+                if result:
+                    result.update({"person_id": person_id, "box": box})
+
+            if result:
+                all_results.append(result)
 
         annotated_frame = self.annotate_video_frame(img_np, all_results)
 
@@ -669,7 +696,6 @@ class Predictor(BasePredictor):
                     ),
                     "blendshapes": {"people": [r["blendshapes"] for r in all_results]},
                     "fullbody_data": {"people": [r["fullbody"] for r in all_results]},
-                    # Fixed conditional expression syntax
                     "hand_landmarks": [r["hands"] for r in all_results]
                     if any(r["hands"] for r in all_results)
                     else None,
@@ -692,13 +718,20 @@ class Predictor(BasePredictor):
         )
 
     def process_video(
-        self, video_path: Path, max_people: int, frame_sample_rate: int
+        self, video_path: Path, max_people: int, frame_sample_rate: int, test_mode: bool
     ) -> Output:
         cap = cv2.VideoCapture(str(video_path))
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         fps = cap.get(cv2.CAP_PROP_FPS)
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        original_total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+        if test_mode:
+            total_frames = 5  # Process only 5 frames in test mode
+            frame_sample_rate = 1
+            print(f"Test mode: Processing first {total_frames} frames")
+        else:
+            total_frames = original_total_frames
 
         frame_results = []
         frame_count = 0
@@ -712,7 +745,7 @@ class Predictor(BasePredictor):
         )
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            while cap.isOpened():
+            while cap.isOpened() and processed_count < total_frames:
                 ret, frame = cap.read()
                 if not ret:
                     break
@@ -798,7 +831,6 @@ class Predictor(BasePredictor):
                     for file in os.listdir(temp_dir):
                         file_path = os.path.join(temp_dir, file)
                         zip_file.write(file_path, f"train/{file}")
-
             debug_video_path = "debug_video.mp4"
             fourcc = cv2.VideoWriter_fourcc(*"mp4v")
             out = cv2.VideoWriter(
@@ -806,16 +838,22 @@ class Predictor(BasePredictor):
             )
             cap = cv2.VideoCapture(str(video_path))
             frame_count = 0
-            while cap.isOpened():
+            processed_debug_count = 0  # Add counter for debug frames
+
+            while (
+                cap.isOpened() and processed_debug_count < total_frames
+            ):  # Add termination condition
                 ret, frame = cap.read()
                 if not ret:
                     break
                 if frame_count % frame_sample_rate != 0:
                     frame_count += 1
                     continue
+
                 img_np = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 boxes = PersonProcessor.detect_people(img_np, max_people)
                 all_results = []
+
                 for person_id, box in enumerate(boxes):
                     startX, startY, endX, endY = box
                     crop = img_np[startY:endY, startX:endX]
@@ -827,9 +865,13 @@ class Predictor(BasePredictor):
                     if person_result:
                         person_result.update({"person_id": person_id, "box": box})
                         all_results.append(person_result)
+
                 annotated_frame = self.annotate_video_frame(img_np, all_results)
                 out.write(cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR))
+
                 frame_count += 1
+                processed_debug_count += 1  # Increment debug counter
+
             out.release()
             cap.release()
 
@@ -869,7 +911,7 @@ class Predictor(BasePredictor):
                 filtered_blendshapes.append({"name": name, "score": filtered_score})
         person_data["blendshapes"] = filtered_blendshapes
 
-        # Filter hands with error handling
+        # Filter hands
         for hand_type in ["left", "right"]:
             hand = person_data["hands"].get(hand_type, [])
             for idx, landmark in enumerate(hand):
@@ -877,7 +919,6 @@ class Predictor(BasePredictor):
                     continue
                 filters = self.hand_filters[hand_type][idx]
 
-                # Safe coordinate access with defaults
                 x = landmark.get("x", 0.0)
                 y = landmark.get("y", 0.0)
                 z = landmark.get("z", 0.0)
