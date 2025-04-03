@@ -643,100 +643,47 @@ class Predictor(BasePredictor):
     def process_image(
         self, image_path: Path, max_people: int, test_mode: bool
     ) -> Output:
-        # Always use real input image
         img = Image.open(image_path).convert("RGB")
         img_np = np.array(img)
         original_h, original_w = img_np.shape[:2]
 
-        # Common processing steps
         boxes = PersonProcessor.detect_people(img_np, max_people)
-
         if test_mode:
-            print("Test mode: Using real image with simplified processing")
-            boxes = boxes[:1]  # Only process first detection
-            max_people = 1
+            boxes = boxes[:1]
 
         all_results = []
         for person_id, box in enumerate(boxes[:max_people]):
-            startX, startY, endX, endY = box
-            crop = img_np[startY:endY, startX:endX]
-
-            if test_mode:
-                # Minimal processing with real crop
-                result = {
-                    "mediapipe": FullBodyProcessor.create_mediapipe_output(
-                        None, None, (original_h, original_w)
-                    ),
-                    "blendshapes": [],
-                    "fullbody": {"keypoints": []},
-                    "hands": {},
-                    "box": box,
-                    "person_id": person_id,
-                }
-                # Add basic bbox annotation
-                result["mediapipe"]["annotations"][0].update(
-                    {
-                        "bbox": [
-                            float(startX),
-                            float(startY),
-                            float(endX - startX),
-                            float(endY - startY),
-                        ],
-                        "area": (endX - startX) * (endY - startY),
-                    }
-                )
-            else:
-                result = PersonProcessor.process_crop(
-                    crop, box, (original_h, original_w), self
-                )
-                if result:
-                    result.update({"person_id": person_id, "box": box})
-
+            result = PersonProcessor.process_crop(
+                img_np[box[1] : box[3], box[0] : box[2]],
+                box,
+                (original_h, original_w),
+                self,
+            )
             if result:
+                result.update({"person_id": person_id, "box": box})
                 all_results.append(result)
 
-        # Identical output handling for both modes
+        # Create annotated debug media
         annotated_frame = self.annotate_video_frame(img_np, all_results)
 
-        with tempfile.NamedTemporaryFile(suffix=".json", delete=False, mode="w") as tmp:
-            output_data = {
-                "info": {
-                    "description": "MediaPipe Full Body Keypoints",
-                    "version": "1.0",
-                    "year": 2023,
-                    "contributor": "MediaPipe Processor",
-                    "date_created": datetime.now().isoformat(),
-                },
-                "licenses": [{"id": 1, "name": "CC-BY-4.0"}],
-                "images": [
-                    {
-                        "id": 0,
-                        "width": original_w,
-                        "height": original_h,
-                        "file_name": str(image_path.name),
-                        "license": 1,
-                        "date_captured": datetime.now().isoformat(),
-                    }
-                ],
-                "annotations": [
-                    ann["mediapipe"]["annotations"][0] for ann in all_results
-                ],
-                "categories": FullBodyProcessor.create_mediapipe_output(
-                    None, None, (0, 0)
-                )["categories"],
-            }
-            json.dump(output_data, tmp)
-            mediapipe_keypoints_path = Path(tmp.name)
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp_img:
+            Image.fromarray(annotated_frame).save(tmp_img.name)
+            debug_media = Path(tmp_img.name)
 
-        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
-            Image.fromarray(annotated_frame).save(tmp.name)
-            debug_media_path = Path(tmp.name)
+        # Raw JSON data without filtering
+        with tempfile.NamedTemporaryFile(
+            suffix=".json", delete=False, mode="w"
+        ) as tmp_json:
+            json_data = {
+                "image": {"width": original_w, "height": original_h},
+                "annotations": [r["mediapipe"]["annotations"][0] for r in all_results],
+            }
+            json.dump(json_data, tmp_json)
+            annotations_path = Path(tmp_json.name)
 
         return Output(
-            annotations=mediapipe_keypoints_path,
-            debug_media=debug_media_path
-            if any(r["hands"] for r in all_results)
-            else None,
+            annotations=annotations_path,
+            debug_media=debug_media,
             num_people=len(all_results),
             media_type="image",
         )
@@ -748,214 +695,212 @@ class Predictor(BasePredictor):
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         fps = cap.get(cv2.CAP_PROP_FPS)
-        original_total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
-        if test_mode:
-            print(f"Test mode: Processing first 5 frames")
-            total_frames = min(5, original_total_frames)
-            frame_sample_rate = 1
-        else:
-            total_frames = original_total_frames
+        # Setup debug video writer
+        debug_video_path = "debug_output.mp4"
+        debug_writer = cv2.VideoWriter(
+            debug_video_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height)
+        )
 
         frame_results = []
         frame_count = 0
         processed_count = 0
 
-        with tempfile.TemporaryDirectory() as temp_dir:
-            progress = tqdm(total=total_frames, desc="Processing video")
-            while cap.isOpened() and processed_count < total_frames:
-                ret, frame = cap.read()
-                if not ret:
-                    break
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
 
-                if frame_count % frame_sample_rate == 0:
-                    img_np = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    boxes = PersonProcessor.detect_people(img_np, max_people)
-                    all_results = []
+            if frame_count % frame_sample_rate == 0:
+                img_np = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                boxes = PersonProcessor.detect_people(img_np, max_people)
 
-                    for person_id, box in enumerate(boxes):
-                        startX, startY, endX, endY = box
-                        crop = img_np[startY:endY, startX:endX]
-
-                        if test_mode:
-                            result = {
-                                "mediapipe": FullBodyProcessor.create_mediapipe_output(
-                                    None, None, (height, width)
-                                ),
-                                "blendshapes": [],
-                                "fullbody": {"keypoints": []},
-                                "hands": {},
-                                "box": box,
-                                "person_id": person_id,
-                            }
-                            result["mediapipe"]["annotations"][0].update(
-                                {
-                                    "bbox": [
-                                        float(startX),
-                                        float(startY),
-                                        float(endX - startX),
-                                        float(endY - startY),
-                                    ],
-                                    "area": (endX - startX) * (endY - startY),
-                                }
-                            )
-                        else:
-                            result = PersonProcessor.process_crop(
-                                crop, box, (height, width), self
-                            )
-                            if result:
-                                result.update({"person_id": person_id, "box": box})
-
-                        if result:
-                            all_results.append(result)
-
-                    # Store frame results
-                    frame_results.append(
-                        {
-                            "mediapipe": self.aggregate_mediapipe(
-                                all_results, width, height
-                            ),
-                            "blendshapes": [r["blendshapes"] for r in all_results],
-                            "fullbody": [r["fullbody"] for r in all_results],
-                            "hands": [r["hands"] for r in all_results],
-                            "num_people": len(all_results),
-                            "frame_number": frame_count,
-                        }
+                frame_data = []
+                for person_id, box in enumerate(boxes):
+                    result = PersonProcessor.process_crop(
+                        img_np[box[1] : box[3], box[0] : box[2]],
+                        box,
+                        (height, width),
+                        self,
                     )
+                    if result:
+                        result.update({"person_id": person_id, "box": box})
+                        frame_data.append(result)
 
-                    # Save original frame without annotations
-                    frame_path = os.path.join(temp_dir, f"frame_{frame_count:06d}.png")
-                    cv2.imwrite(frame_path, cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR))
-                    processed_count += 1
-                    progress.update(1)
+                # Store raw results
+                frame_results.append(
+                    {
+                        "frame": frame_count,
+                        "timestamp": frame_count / fps,
+                        "annotations": [
+                            r["mediapipe"]["annotations"][0] for r in frame_data
+                        ],
+                    }
+                )
 
-                frame_count += 1
-                if frame_count >= original_total_frames:
-                    break
+                # Create and write annotated frame
+                annotated_frame = self.annotate_video_frame(img_np, frame_data)
+                debug_writer.write(cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR))
+                processed_count += 1
 
-            progress.close()
-            cap.release()
+            frame_count += 1
+            if test_mode and frame_count >= 5 * frame_sample_rate:
+                break
 
-            # Create final output package
-            with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp_zip:
-                zip_path = tmp_zip.name
-                with zipfile.ZipFile(zip_path, "w") as zip_file:
-                    # Write annotations
-                    with tempfile.NamedTemporaryFile(
-                        suffix=".json", delete=False, mode="w"
-                    ) as tmp_json:
-                        annotations = []
-                        annotation_id = 0
+        cap.release()
+        debug_writer.release()
 
-                        for fr in frame_results:
-                            for ann in fr["mediapipe"]["annotations"]:
-                                annotations.append(
-                                    {
-                                        "id": annotation_id,
-                                        "image_id": fr["frame_number"],
-                                        "category_id": 1,
-                                        "iscrowd": 0,
-                                        "keypoints": ann["keypoints"],
-                                        "num_keypoints": ann["num_keypoints"],
-                                        "bbox": ann["bbox"],
-                                        "area": ann["area"],
-                                        "frame_number": fr["frame_number"],
-                                        "timestamp": fr["frame_number"] / fps
-                                        if fps > 0
-                                        else 0,
-                                    }
-                                )
-                                annotation_id += 1
-
-                        json.dump(
-                            {
-                                "info": {
-                                    "description": "MediaPipe Full Body Keypoints",
-                                    "version": "1.0",
-                                    "year": 2023,
-                                    "contributor": "MediaPipe Processor",
-                                    "date_created": datetime.now().isoformat(),
-                                    "video_metadata": {
-                                        "width": width,
-                                        "height": height,
-                                        "fps": fps,
-                                        "total_frames": processed_count,
-                                        "frame_sample_rate": frame_sample_rate,
-                                    },
-                                },
-                                "licenses": [{"id": 1, "name": "CC-BY-4.0"}],
-                                "categories": FullBodyProcessor.create_mediapipe_output(
-                                    None, None, (0, 0)
-                                )["categories"],
-                                "images": [
-                                    {
-                                        "id": fr["frame_number"],
-                                        "file_name": f"frame_{fr['frame_number']:06d}.png",
-                                        "width": width,
-                                        "height": height,
-                                    }
-                                    for fr in frame_results
-                                ],
-                                "annotations": annotations,
-                            },
-                            tmp_json,
-                        )
-                        zip_file.write(tmp_json.name, "annotations.json")
-
-                    # Write frames
-                    for file in os.listdir(temp_dir):
-                        file_path = os.path.join(temp_dir, file)
-                        zip_file.write(file_path, f"frames/{file}")
-
-            # Generate debug video with annotations
-            debug_video_path = "debug_video.mp4"
-            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-            out = cv2.VideoWriter(debug_video_path, fourcc, fps, (width, height))
-            cap = cv2.VideoCapture(str(video_path))
-            debug_frame_count = 0
-            processed_debug_count = 0
-
-            while cap.isOpened() and processed_debug_count < processed_count:
-                ret, frame = cap.read()
-                if not ret:
-                    break
-
-                if debug_frame_count % frame_sample_rate == 0:
-                    img_np = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    boxes = PersonProcessor.detect_people(img_np, max_people)
-                    all_results = []
-
-                    for person_id, box in enumerate(boxes):
-                        startX, startY, endX, endY = box
-                        crop = img_np[startY:endY, startX:endX]
-                        if crop.size == 0:
-                            continue
-                        person_result = PersonProcessor.process_crop(
-                            crop, box, (height, width), self
-                        )
-                        if person_result:
-                            person_result.update({"person_id": person_id, "box": box})
-                            all_results.append(person_result)
-
-                    # Generate annotated frame for debug video
-                    annotated_frame = self.annotate_video_frame(img_np, all_results)
-                    out.write(cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR))
-                    processed_debug_count += 1
-
-                debug_frame_count += 1
-                if debug_frame_count >= original_total_frames:
-                    break
-
-            out.release()
-            cap.release()
-
-            return Output(
-                annotations=Path(zip_path),
-                debug_media=Path(debug_video_path),
-                num_people=max(f["num_people"] for f in frame_results),
-                media_type="video",
-                total_frames=processed_count,
+        # Save raw annotations
+        with tempfile.NamedTemporaryFile(
+            suffix=".json", delete=False, mode="w"
+        ) as tmp_json:
+            json.dump(
+                {
+                    "metadata": {"fps": fps, "width": width, "height": height},
+                    "frames": frame_results,
+                },
+                tmp_json,
             )
+            annotations_path = Path(tmp_json.name)
+
+        return Output(
+            annotations=annotations_path,
+            debug_media=Path(debug_video_path),
+            num_people=max(len(f["annotations"]) for f in frame_results),
+            media_type="video",
+            total_frames=processed_count,
+        )
+
+    def process_image(
+        self, image_path: Path, max_people: int, test_mode: bool
+    ) -> Output:
+        img = Image.open(image_path).convert("RGB")
+        img_np = np.array(img)
+        original_h, original_w = img_np.shape[:2]
+
+        boxes = PersonProcessor.detect_people(img_np, max_people)
+        if test_mode:
+            boxes = boxes[:1]
+
+        all_results = []
+        for person_id, box in enumerate(boxes[:max_people]):
+            result = PersonProcessor.process_crop(
+                img_np[box[1] : box[3], box[0] : box[2]],
+                box,
+                (original_h, original_w),
+                self,
+            )
+            if result:
+                result.update({"person_id": person_id, "box": box})
+                all_results.append(result)
+
+        # Create annotated debug media
+        annotated_frame = self.annotate_video_frame(img_np, all_results)
+
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp_img:
+            Image.fromarray(annotated_frame).save(tmp_img.name)
+            debug_media = Path(tmp_img.name)
+
+        # Raw JSON data without filtering
+        with tempfile.NamedTemporaryFile(
+            suffix=".json", delete=False, mode="w"
+        ) as tmp_json:
+            json_data = {
+                "image": {"width": original_w, "height": original_h},
+                "annotations": [r["mediapipe"]["annotations"][0] for r in all_results],
+            }
+            json.dump(json_data, tmp_json)
+            annotations_path = Path(tmp_json.name)
+
+        return Output(
+            annotations=annotations_path,
+            debug_media=debug_media,
+            num_people=len(all_results),
+            media_type="image",
+        )
+
+    def process_video(
+        self, video_path: Path, max_people: int, frame_sample_rate: int, test_mode: bool
+    ) -> Output:
+        cap = cv2.VideoCapture(str(video_path))
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        fps = cap.get(cv2.CAP_PROP_FPS)
+
+        # Setup debug video writer
+        debug_video_path = "debug_output.mp4"
+        debug_writer = cv2.VideoWriter(
+            debug_video_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height)
+        )
+
+        frame_results = []
+        frame_count = 0
+        processed_count = 0
+
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            if frame_count % frame_sample_rate == 0:
+                img_np = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                boxes = PersonProcessor.detect_people(img_np, max_people)
+
+                frame_data = []
+                for person_id, box in enumerate(boxes):
+                    result = PersonProcessor.process_crop(
+                        img_np[box[1] : box[3], box[0] : box[2]],
+                        box,
+                        (height, width),
+                        self,
+                    )
+                    if result:
+                        result.update({"person_id": person_id, "box": box})
+                        frame_data.append(result)
+
+                # Store raw results
+                frame_results.append(
+                    {
+                        "frame": frame_count,
+                        "timestamp": frame_count / fps,
+                        "annotations": [
+                            r["mediapipe"]["annotations"][0] for r in frame_data
+                        ],
+                    }
+                )
+
+                # Create and write annotated frame
+                annotated_frame = self.annotate_video_frame(img_np, frame_data)
+                debug_writer.write(cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR))
+                processed_count += 1
+
+            frame_count += 1
+            if test_mode and frame_count >= 5 * frame_sample_rate:
+                break
+
+        cap.release()
+        debug_writer.release()
+
+        # Save raw annotations
+        with tempfile.NamedTemporaryFile(
+            suffix=".json", delete=False, mode="w"
+        ) as tmp_json:
+            json.dump(
+                {
+                    "metadata": {"fps": fps, "width": width, "height": height},
+                    "frames": frame_results,
+                },
+                tmp_json,
+            )
+            annotations_path = Path(tmp_json.name)
+
+        return Output(
+            annotations=annotations_path,
+            debug_media=Path(debug_video_path),
+            num_people=max(len(f["annotations"]) for f in frame_results),
+            media_type="video",
+            total_frames=processed_count,
+        )
 
     def apply_filters(self, person_data, timestamp):
         # Filter keypoints
