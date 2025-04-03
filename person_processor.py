@@ -4,22 +4,25 @@ from mediapipe.framework.formats import landmark_pb2
 from mediapipe.tasks.python.components.containers import Landmark
 from typing import List, Tuple, Any
 import mediapipe as mp
+from mediapipe.tasks.python.core import BaseOptions
+from mediapipe.tasks.python.vision import ObjectDetector, ObjectDetectorOptions
+from full_body_processor import FullBodyProcessor
 
 class PersonProcessor:
     @staticmethod
     def detect_people(
         image_np: np.ndarray, max_people: int
     ) -> List[Tuple[int, int, int, int]]:
-        base_options = python.BaseOptions(
+        base_options = BaseOptions(
             model_asset_path="thirdparty/ssd_mobilenet_v2.tflite"
         )
-        options = vision.ObjectDetectorOptions(
+        options = ObjectDetectorOptions(
             base_options=base_options,
             score_threshold=0.4,
             category_allowlist=["person"],
             max_results=max_people,
         )
-        detector = vision.ObjectDetector.create_from_options(options)
+        detector = ObjectDetector.create_from_options(options)
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=image_np)
         detection_result = detector.detect(mp_image)
         boxes = []

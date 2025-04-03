@@ -30,6 +30,8 @@ from mediapipe.tasks.python.components.containers import Landmark
 from cog import BasePredictor, Input, Path, BaseModel
 from PIL import Image
 from typing import Any, List, Tuple, Optional
+import zipfile
+import shutil
 
 
 class LowPassFilter:
@@ -621,16 +623,19 @@ class Predictor(BasePredictor):
         test_mode: bool = Input(
             description="Enable test mode for quick verification", default=False
         ),
+        export_train: bool = Input(
+            description="Export training zip containing json annotations and frame pngs", default=True
+        ),
     ) -> Output:
         if str(media_path).lower().endswith((".mp4", ".avi", ".mov", ".mkv")):
             return self.process_video(
-                media_path, max_people, frame_sample_rate, test_mode
+                media_path, max_people, frame_sample_rate, test_mode, export_train
             )
         else:
-            return self.process_image(media_path, max_people, test_mode)
+            return self.process_image(media_path, max_people, test_mode, export_train)
 
     def process_image(
-        self, image_path: Path, max_people: int, test_mode: bool
+        self, image_path: Path, max_people: int, test_mode: bool, export_train: bool
     ) -> Output:
         img = Image.open(image_path).convert("RGB")
         img_np = np.array(img)
@@ -670,9 +675,12 @@ class Predictor(BasePredictor):
             }
             json.dump(json_data, tmp_json)
             annotations_path = Path(tmp_json.name)
-        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp_img:
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_img:
             Image.fromarray(annotated_frame).save(tmp_img.name)
             debug_media = Path(tmp_img.name)
+        if export_train:
+            zip_path = self.export_train_zip(annotations_path, [debug_media])
+            debug_media = zip_path
         return Output(
             annotations=annotations_path,
             debug_media=debug_media,
@@ -681,7 +689,7 @@ class Predictor(BasePredictor):
         )
 
     def process_video(
-        self, video_path: Path, max_people: int, frame_sample_rate: int, test_mode: bool
+        self, video_path: Path, max_people: int, frame_sample_rate: int, test_mode: bool, export_train: bool
     ) -> Output:
         cap = cv2.VideoCapture(str(video_path))
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -701,6 +709,7 @@ class Predictor(BasePredictor):
         debug_writer = cv2.VideoWriter(
             debug_video_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height)
         )
+        train_frames = []
         frame_count = 0
         processed_count = 0
         with tqdm(total=total_frames, desc="Processing Video") as pbar:
@@ -751,6 +760,10 @@ class Predictor(BasePredictor):
                     )
                     annotated_frame = self.annotate_video_frame(img_np, frame_filtered)
                     debug_writer.write(cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR))
+                    if export_train:
+                        frame_png = Path(tempfile.NamedTemporaryFile(suffix=".png", delete=False).name)
+                        Image.fromarray(annotated_frame).save(frame_png)
+                        train_frames.append(frame_png)
                     processed_count += 1
                     pbar.update(1)
                 frame_count += 1
@@ -763,13 +776,34 @@ class Predictor(BasePredictor):
         ) as tmp_json:
             json.dump(json_data, tmp_json, indent=2)
             json_path = Path(tmp_json.name)
+        debug_media = Path(debug_video_path)
+        if export_train:
+            zip_path = self.export_train_zip(json_path, train_frames)
+            debug_media = zip_path
         return Output(
             annotations=json_path,
-            debug_media=Path(debug_video_path),
+            debug_media=debug_media,
             num_people=max((len(f["annotations"]) for f in json_data["frames"]), default=0),
             media_type="video",
             total_frames=processed_count,
         )
+
+    def export_train_zip(self, json_file: Path, frame_files: list) -> Path:
+        temp_dir = tempfile.mkdtemp()
+        shutil.copy(json_file, os.path.join(temp_dir, "annotations.json"))
+        train_dir = os.path.join(temp_dir, "train")
+        os.makedirs(train_dir, exist_ok=True)
+        for f in frame_files:
+            shutil.copy(f, os.path.join(train_dir, f.name))
+        zip_path = Path(tempfile.NamedTemporaryFile(suffix=".zip", delete=False).name)
+        with zipfile.ZipFile(zip_path, "w") as zipf:
+            for foldername, subfolders, filenames in os.walk(temp_dir):
+                for filename in filenames:
+                    filepath = os.path.join(foldername, filename)
+                    arcname = os.path.relpath(filepath, temp_dir)
+                    zipf.write(filepath, arcname)
+        shutil.rmtree(temp_dir)
+        return zip_path
 
     def apply_filters(self, person_data, timestamp):
         for kp in person_data["fullbody"]["keypoints"]:
