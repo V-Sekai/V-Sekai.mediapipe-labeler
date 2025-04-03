@@ -823,17 +823,14 @@ class Predictor(BasePredictor):
                         }
                     )
 
-                    # Save frame image
-                    annotated_frame = self.annotate_video_frame(img_np, all_results)
+                    # Save original frame without annotations
                     frame_path = os.path.join(temp_dir, f"frame_{frame_count:06d}.png")
-                    cv2.imwrite(
-                        frame_path, cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR)
-                    )
+                    cv2.imwrite(frame_path, cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR))
                     processed_count += 1
                     progress.update(1)
 
                 frame_count += 1
-                if frame_count >= original_total_frames:  # Prevent infinite loop
+                if frame_count >= original_total_frames:
                     break
 
             progress.close()
@@ -910,7 +907,7 @@ class Predictor(BasePredictor):
                         file_path = os.path.join(temp_dir, file)
                         zip_file.write(file_path, f"frames/{file}")
 
-            # Generate debug video
+            # Generate debug video with annotations
             debug_video_path = "debug_video.mp4"
             fourcc = cv2.VideoWriter_fourcc(*"mp4v")
             out = cv2.VideoWriter(debug_video_path, fourcc, fps, (width, height))
@@ -940,12 +937,13 @@ class Predictor(BasePredictor):
                             person_result.update({"person_id": person_id, "box": box})
                             all_results.append(person_result)
 
+                    # Generate annotated frame for debug video
                     annotated_frame = self.annotate_video_frame(img_np, all_results)
                     out.write(cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR))
-                    processed_debug_count += 1  # Increment per frame
+                    processed_debug_count += 1
 
                 debug_frame_count += 1
-                if debug_frame_count >= original_total_frames:  # Safety break
+                if debug_frame_count >= original_total_frames:
                     break
 
             out.release()
