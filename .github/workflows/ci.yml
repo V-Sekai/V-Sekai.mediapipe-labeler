@@ -1,0 +1,49 @@
+name: CI
+'on':
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+      - name: Set up Docker
+        uses: docker/setup-docker-action@v4
+      - name: Setup Cog
+        uses: replicate/setup-cog@v2
+        with:
+          token: '${{ secrets.REPLICATE_CLI_AUTH_TOKEN }}'
+      - name: Run tests (Cog) with media integration
+        run: |
+          media_path="@thirdparty/image.jpg"
+          cog predict -i "media_path=$media_path" | \
+                  tee \
+                          >(jq -r '.debug_media | split(",")[1]' | base64 -d > debug_output.png) \
+                          >(jq -r '.mediapipe' > mediapipe.json) \
+                          >(jq -r '.fullbody' > fullbody.json) \
+                          >(jq -r '.hand_landmarks' > hand_landmarks.json) \
+                          >(jq -r '.blendshapes' > blendshapes.json) \
+                  >/dev/null
+      - name: Upload test artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-artifacts
+          path: |
+            debug_output.png
+            mediapipe.json
+            fullbody.json
+            hand_landmarks.json
+            blendshapes.json
+      - name: Push to Replicate
+        run: >-
+          cog push
+          r8.im/fire/v-sekai.mediapipe-labeler:9858ca6884ed0bffeae5dd63a0420949b338e8ac6b8167bfcf8d1adce3d8bd92
