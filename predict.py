@@ -20,6 +20,7 @@ from PIL import ImageDraw, ImageFont
 import math
 import numpy as np
 import os
+import subprocess
 import sys
 from moviepy import VideoFileClip
 import urllib.request
@@ -774,7 +775,25 @@ class Predictor(BasePredictor):
         progress.close()
         cap.release()
         out.release()
-
+        
+        # Remux the video to move MOOV atom to the start
+        remuxed_path = debug_video_path + "_remuxed.mp4"
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-i", debug_video_path,
+                "-c", "copy",
+                "-movflags", "+faststart",
+                remuxed_path
+            ],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+        os.remove(debug_video_path)
+        os.rename(remuxed_path, debug_video_path)
+        
         # Add audio to the debug video
         original_video = VideoFileClip(str(video_path))
         debug_video = VideoFileClip(debug_video_path)
@@ -782,9 +801,6 @@ class Predictor(BasePredictor):
         with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp_final:
             debug_with_audio_path = tmp_final.name
         final_video_with_audio.write_videofile(debug_with_audio_path)
-
-        # Convert the video to a widely supported format
-        import subprocess
 
         with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp_final_conv:
             final_video_path = tmp_final_conv.name
