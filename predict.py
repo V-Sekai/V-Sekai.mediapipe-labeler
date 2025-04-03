@@ -194,11 +194,8 @@ RIGHT_HAND_VRM_MAPPING = {
 
 
 class Output(BaseModel):
-    mediapipe_keypoints: Path
-    blendshapes: Path
-    fullbody_data: Path
+    annotations: Path
     debug_media: Path
-    hand_landmarks: Optional[Path]
     num_people: int
     media_type: str
     total_frames: Optional[int] = None
@@ -590,10 +587,10 @@ class Predictor(BasePredictor):
         num_keypoints = len(MEDIAPIPE_KEYPOINT_NAMES)
         self.keypoint_filters = [
             {
-            "x": OneEuroFilter(10, 1.0, 0.7, 1.0),
-            "y": OneEuroFilter(10, 1.0, 0.7, 1.0),
-            "z": OneEuroFilter(10, 1.0, 0.7, 1.0),
-            "vis": OneEuroFilter(10, 1.0, 0.7, 1.0),
+                "x": OneEuroFilter(10, 1.0, 0.7, 1.0),
+                "y": OneEuroFilter(10, 1.0, 0.7, 1.0),
+                "z": OneEuroFilter(10, 1.0, 0.7, 1.0),
+                "vis": OneEuroFilter(10, 1.0, 0.7, 1.0),
             }
             for _ in range(num_keypoints)
         ]
@@ -672,6 +669,7 @@ class Predictor(BasePredictor):
                     ),
                     "blendshapes": {"people": [r["blendshapes"] for r in all_results]},
                     "fullbody_data": {"people": [r["fullbody"] for r in all_results]},
+                    # Fixed conditional expression syntax
                     "hand_landmarks": [r["hands"] for r in all_results]
                     if any(r["hands"] for r in all_results)
                     else None,
@@ -685,11 +683,8 @@ class Predictor(BasePredictor):
             debug_media_path = Path(tmp.name)
 
         return Output(
-            mediapipe_keypoints=mediapipe_keypoints_path,
-            blendshapes=mediapipe_keypoints_path,
-            fullbody_data=mediapipe_keypoints_path,
-            debug_media=debug_media_path,
-            hand_landmarks=mediapipe_keypoints_path
+            annotations=mediapipe_keypoints_path,
+            debug_media=debug_media_path
             if any(r["hands"] for r in all_results)
             else None,
             num_people=len(all_results),
@@ -756,7 +751,9 @@ class Predictor(BasePredictor):
 
                 frame_results.append(
                     {
-                        "mediapipe": self.aggregate_mediapipe(all_results, width, height),
+                        "mediapipe": self.aggregate_mediapipe(
+                            all_results, width, height
+                        ),
                         "blendshapes": [r["blendshapes"] for r in all_results],
                         "fullbody": [r["fullbody"] for r in all_results],
                         "hands": [r["hands"] for r in all_results],
@@ -771,7 +768,9 @@ class Predictor(BasePredictor):
             progress.close()
             cap.release()
 
-            with tempfile.NamedTemporaryFile(suffix=".json", delete=False, mode="w") as tmp:
+            with tempfile.NamedTemporaryFile(
+                suffix=".json", delete=False, mode="w"
+            ) as tmp:
                 json.dump(
                     {
                         "info": {
@@ -784,9 +783,9 @@ class Predictor(BasePredictor):
                         "licenses": [{"id": 1, "name": "CC-BY-4.0"}],
                         "images": [],
                         "annotations": [],
-                        "categories": FullBodyProcessor.create_mediapipe_output(None, None, (0, 0))[
-                            "categories"
-                        ],
+                        "categories": FullBodyProcessor.create_mediapipe_output(
+                            None, None, (0, 0)
+                        )["categories"],
                     },
                     tmp,
                 )
@@ -802,7 +801,9 @@ class Predictor(BasePredictor):
 
             debug_video_path = "debug_video.mp4"
             fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-            out = cv2.VideoWriter(debug_video_path, fourcc, fps / frame_sample_rate, (width, height))
+            out = cv2.VideoWriter(
+                debug_video_path, fourcc, fps / frame_sample_rate, (width, height)
+            )
             cap = cv2.VideoCapture(str(video_path))
             frame_count = 0
             while cap.isOpened():
