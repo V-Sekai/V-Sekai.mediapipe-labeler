@@ -164,10 +164,10 @@ class Predictor(BasePredictor):
             ],
         }
         for person_id, ann in enumerate(json_data["annotations"]):
-            # Ensure keypoints array has exactly 44 keypoints (44 keypoints × 3 values = 132 elements)
-            while len(ann["keypoints"]) < 132:
+            # Ensure keypoints array has exactly 75 keypoints (75 keypoints × 3 values = 225 elements)
+            while len(ann["keypoints"]) < 225:
                 ann["keypoints"].extend([0.0, 0.0, 0])
-            ann["keypoints"] = ann["keypoints"][:132]  # Truncate if longer
+            ann["keypoints"] = ann["keypoints"][:225]  # Truncate if longer
 
             # Update num_keypoints to count only labeled keypoints (v > 0)
             ann["num_keypoints"] = sum(1 for i in range(2, len(ann["keypoints"]), 3) if ann["keypoints"][i] > 0)
@@ -188,26 +188,6 @@ class Predictor(BasePredictor):
                     valid_keypoints += 1
             ann["num_keypoints"] = valid_keypoints
 
-            hand_keypoints = ann["keypoints"][33 * 3:54 * 3]  # Keypoints 33-54
-            ann["keypoints"].extend(hand_keypoints)
-
-            # Truncate or pad keypoints to ensure exactly 44 keypoints (132 values)
-            while len(ann["keypoints"]) < 132:
-                ann["keypoints"].extend([0.0, 0.0, 0])
-            ann["keypoints"] = ann["keypoints"][:132]  # Truncate if longer
-
-            # Validate hand keypoints (indices 33–43)
-            for i in range(33 * 3, 44 * 3, 3):
-                x, y, v = ann["keypoints"][i:i+3]
-                if v > 0 and (x > json_data["image"]["width"] or y > json_data["image"]["height"]):
-                    ann["keypoints"][i:i+3] = [0.0, 0.0, 0]  # Set to default if out of bounds
-
-            # Validate right hand keypoints (indices 38–43)
-            for i in range(38 * 3, 44 * 3, 3):
-                x, y, v = ann["keypoints"][i:i+3]
-                if v > 0 and (x > json_data["image"]["width"] or y > json_data["image"]["height"]):
-                    ann["keypoints"][i:i+3] = [0.0, 0.0, 0]  # Set to default if out of bounds
-
             # Clamp bounding box to fit within image dimensions
             x, y, w, h = ann["bbox"]
             if y + h > json_data["image"]["height"]:
@@ -217,7 +197,7 @@ class Predictor(BasePredictor):
             ann["bbox"] = [x, y, w, h]
 
         if "categories" not in json_data:
-            category_id = max([cat["id"] for cat in json_data.get("categories", [])], default=0) + 1
+            category_id = 1
             json_data["categories"] = [
                 {
                     "id": category_id,
@@ -246,8 +226,9 @@ class Predictor(BasePredictor):
             original_debug_media = Path(tmp_orig.name)
         # If an aligned image is provided, load it; otherwise use the original
         try:
-            aligned = Image.open(str(self.inputs.get("aligned_media")))
-            aligned_img_np = np.array(aligned.convert("RGB"))
+            if self.inputs.get("aligned_media"):
+                aligned = Image.open(str(self.inputs.get("aligned_media")))
+                aligned_img_np = np.array(aligned.convert("RGB"))
         except Exception:
             aligned_img_np = img_np
         annotated_aligned = self.annotate_video_frame(aligned_img_np, all_results)
@@ -283,28 +264,16 @@ class Predictor(BasePredictor):
         # Prepare lists for training frames separately
         original_train_frames = []
         aligned_train_frames = []
-        debug_video_path = "annotated_video.mp4"
-        debug_writer = cv2.VideoWriter(
-            debug_video_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height)
-        )
         if aligned_media is not None:
             color_cap = cv2.VideoCapture(str(aligned_media))
         else:
             color_cap = None
-        debug_frames = []  # new list to store annotated frames
-        frame_count = 0
-        processed_count = 0
-        # Prepare separate writers and lists for original and aligned annotated frames
         original_debug_frames = []
         aligned_debug_frames = []
-        debug_writer = cv2.VideoWriter(
-            "temp_annotated_video.mp4", cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height)
-        )
-        if aligned_media is not None:
-            color_cap = cv2.VideoCapture(str(aligned_media))
-        else:
-            color_cap = None
-        with tqdm(desc="Processing Video", total=int(cap.get(cv2.CAP_PROP_FRAME_COUNT))) as pbar:
+        frame_count = 0
+        processed_count = 0
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        with tqdm(desc="Processing Video", total=total_frames) as pbar:
             while cap.isOpened():
                 ret, frame = cap.read()
                 if not ret:
@@ -354,7 +323,6 @@ class Predictor(BasePredictor):
                     # Process annotations on both original and aligned frames
                     annotated_original = self.annotate_video_frame(original_frame_rgb, frame_filtered)
                     annotated_aligned = self.annotate_video_frame(aligned_frame_rgb, frame_filtered)
-                    debug_writer.write(cv2.cvtColor(annotated_aligned, cv2.COLOR_RGB2BGR))
                     original_debug_frames.append(annotated_original)
                     aligned_debug_frames.append(annotated_aligned)
                     if export_train:
@@ -372,20 +340,8 @@ class Predictor(BasePredictor):
                 if test_mode and frame_count >= 5 * frame_sample_rate:
                     break
         cap.release()
-        debug_writer.release()
         if color_cap is not None:
             color_cap.release()
-        new_video = "debug_video.mp4"
-        writer = cv2.VideoWriter(new_video, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
-        for frm in debug_frames:
-            writer.write(cv2.cvtColor(frm, cv2.COLOR_RGB2BGR))
-        writer.release()
-        annotations_data = json_data
-        original_export_folder = None
-        aligned_export_folder = None
-        if export_train:
-            original_export_folder = self.export_train_folder(json_data, original_train_frames)
-            aligned_export_folder = self.export_train_folder(json_data, aligned_train_frames)
         # Write separate videos for original and aligned annotated outputs
         original_video = "original_debug_video.mp4"
         writer_orig = cv2.VideoWriter(original_video, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
@@ -397,10 +353,17 @@ class Predictor(BasePredictor):
         for frm in aligned_debug_frames:
             writer_aligned.write(cv2.cvtColor(frm, cv2.COLOR_RGB2BGR))
         writer_aligned.release()
+        
+        original_export_folder = None
+        aligned_export_folder = None
+        if export_train:
+            original_export_folder = self.export_train_folder(json_data, original_train_frames)
+            aligned_export_folder = self.export_train_folder(json_data, aligned_train_frames)
+
         return Output(
-            annotations=json.dumps(annotations_data),
+            annotations=json.dumps(json_data),
             debug_media=Path(original_video),         # original annotated video
-            aligned_debug_media=Path(aligned_video),     # aligned annotated video
+            aligned_debug_media=Path(aligned_video),  # aligned annotated video
             num_people=max((len(f["annotations"]) for f in json_data["frames"]), default=0),
             media_type="video",
             export_train_folder=original_export_folder,
@@ -408,7 +371,6 @@ class Predictor(BasePredictor):
         )
 
     def export_train_folder(self, json_data, frame_files: list) -> Path:
-        from full_body_processor import MEDIAPIPE_KEYPOINT_NAMES
         from datetime import datetime
         current_time = datetime.now().isoformat()
         def convert_to_coco(json_data, frame_files):
@@ -519,7 +481,7 @@ class Predictor(BasePredictor):
         for kp in person_data["fullbody"]["keypoints"]:
             kp_id = kp["id"]
             if kp_id >= len(self.keypoint_filters):
-                continue
+                continue  # Skip keypoints without corresponding filters
             x = kp["position"][0]
             y = kp["position"][1]
             z = kp["position"][2]
@@ -574,22 +536,6 @@ class Predictor(BasePredictor):
             bbox = [(x - 4, y - 4), (x + 4, y + 4)]
             draw.ellipse(bbox, fill=colors["red"], outline=None)
 
-    def aggregate_mediapipe(self, results, width, height):
-        annotations = []
-        for res in results:
-            ann = res["mediapipe"]["annotations"][0].copy()
-            annotations.append(
-                {
-                    "keypoints": ann["keypoints"],
-                    "num_keypoints": ann["num_keypoints"],
-                    "bbox": ann["bbox"],
-                    "area": ann["area"],
-                    "category_id": 1,
-                    "iscrowd": 0,
-                }
-            )
-        return {"annotations": annotations}
-
     def process_training_dataset(self, dataset_zip: Path) -> Output:
         """
         Ingest a zip of training images and a COCO JSON annotation file,
@@ -599,8 +545,6 @@ class Predictor(BasePredictor):
         """
         import zipfile
         import tempfile
-        import json
-        import os
 
         # Unzip input dataset
         with tempfile.TemporaryDirectory() as temp_dir:
