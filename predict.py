@@ -300,7 +300,7 @@ class Predictor(BasePredictor):
         debug_writer.release()
         if color_cap is not None:
             color_cap.release()
-        new_video = "recreated_debug_video.mp4"
+        new_video = "debug_video.mp4"
         writer = cv2.VideoWriter(new_video, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
         for frm in debug_frames:
             writer.write(cv2.cvtColor(frm, cv2.COLOR_RGB2BGR))
