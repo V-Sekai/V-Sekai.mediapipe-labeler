@@ -60,7 +60,7 @@ class LowPassFilter:
     def lastValue(self) -> float:
         return self.__y
 
-    def lastFilteredValue() -> float:
+    def lastFilteredValue(self) -> float:
         return self.__s
 
     def reset(self) -> None:
