@@ -122,14 +122,6 @@ class FullBodyProcessor:
         }
 
     @staticmethod
-    def create_blendshapes_output(blendshapes):
-        return [
-            {"name": bs.category_name, "score": float(bs.score)}
-            for bs in blendshapes
-            if hasattr(bs, "category_name") and hasattr(bs, "score")
-        ]
-
-    @staticmethod
     def create_fullbody_output(pose, image_size):
         keypoints = []
         height, width = image_size

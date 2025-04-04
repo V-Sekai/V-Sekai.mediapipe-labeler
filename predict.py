@@ -527,13 +527,6 @@ class Predictor(BasePredictor):
                 self.keypoint_filters[kp_id]["z"](z, timestamp),
             ]
             kp["visibility"] = self.keypoint_filters[kp_id]["vis"](vis, timestamp)
-        filtered_blendshapes = []
-        for bs in person_data["blendshapes"]:
-            name = bs["name"]
-            if name in self.blendshape_filters:
-                filtered_score = self.blendshape_filters[name](bs["score"], timestamp)
-                filtered_blendshapes.append({"name": name, "score": filtered_score})
-        person_data["blendshapes"] = filtered_blendshapes
         for hand_type in ["left", "right"]:
             hand = person_data["hands"].get(hand_type, [])
             for idx, landmark in enumerate(hand):
