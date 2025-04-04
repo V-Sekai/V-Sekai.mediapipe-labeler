@@ -562,3 +562,77 @@ class Predictor(BasePredictor):
                 }
             )
         return {"annotations": annotations}
+
+    def process_training_dataset(self, dataset_zip: Path) -> Output:
+        """
+        Ingest a zip of training images and a COCO JSON annotation file,
+        run mediapipe annotation on each image, merge the new annotations
+        under 'mediapipe_annotations' while preserving original metadata,
+        and output a new zip archive of the training dataset.
+        """
+        import zipfile
+        import tempfile
+        import json
+        import os
+
+        # Unzip input dataset
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with zipfile.ZipFile(str(dataset_zip), 'r') as zip_ref:
+                zip_ref.extractall(temp_dir)
+            # Locate the original COCO annotation file
+            annotation_path = None
+            for root, dirs, files in os.walk(temp_dir):
+                if '_annotations.coco.json' in files:
+                    annotation_path = os.path.join(root, '_annotations.coco.json')
+                    break
+            if not annotation_path:
+                raise Exception("COCO annotation file not found in the zip.")
+
+            with open(annotation_path, 'r') as f:
+                coco_data = json.load(f)
+
+            # For each image in the annotation, run mediapipe annotation and add results.
+            for image_info in coco_data.get("images", []):
+                image_file = image_info["file_name"]
+                image_path_full = os.path.join(os.path.dirname(annotation_path), image_file)
+                if not os.path.exists(image_path_full):
+                    continue
+                img = Image.open(image_path_full).convert("RGB")
+                img_np = np.array(img)
+                boxes = PersonProcessor.detect_people(img_np, max_people=100)
+                mediapipe_annotations = []
+                for person_id, box in enumerate(boxes):
+                    startX, startY, endX, endY = box
+                    crop = img_np[startY:endY, startX:endX]
+                    result = PersonProcessor.process_crop(crop, box, (img_np.shape[0], img_np.shape[1]), self)
+                    if result and "mediapipe" in result:
+                        mediapipe_annotations.append(result["mediapipe"]["annotations"][0])
+                # Replace the image metadata with filtered metadata (only file name, time-related data, and copyright)
+                keys_to_preserve = ["file_name", "date_captured"]
+                if "copyright" in image_info:
+                    keys_to_preserve.append("copyright")
+                new_info = { key: image_info[key] for key in keys_to_preserve if key in image_info }
+                new_info["mediapipe_annotations"] = mediapipe_annotations
+                image_info.clear()
+                image_info.update(new_info)
+
+        # Swap keypoints with skeleton and remove the duplicate key to avoid keeping two copies.
+        for category in coco_data.get("categories", []):
+            if "keypoints" in category and "skeleton" in category:
+                category["keypoints"] = category["skeleton"]
+                del category["skeleton"]
+
+        # Write updated annotations to a new file
+        updated_annotation_path = os.path.join(os.path.dirname(annotation_path), '_annotations_updated.coco.json')
+        with open(updated_annotation_path, 'w') as f:
+            json.dump(coco_data, f, indent=2)
+
+            # Create a new zip archive of the training dataset folder (preserving the original structure)
+            base_name = tempfile.NamedTemporaryFile(suffix=".zip", delete=False).name.replace(".zip", "")
+            new_zip_path = shutil.make_archive(base_name=base_name, format='zip', root_dir=os.path.dirname(annotation_path))
+            return Output(
+                annotations=json.dumps(coco_data),
+                debug_media=Path(new_zip_path),
+                num_people=len(coco_data.get("images", [])),
+                media_type="training_dataset"
+            )
