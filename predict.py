@@ -289,12 +289,16 @@ class Predictor(BasePredictor):
         writer.release()
         debug_media = Path(new_video)
         annotations_data = json_data
+        export_folder = None
+        if export_train:
+            export_folder = self.export_train_folder(json_data, train_frames)
         return Output(
-            annotations=json.dumps(annotations_data),  # change here: convert dict to str
+            annotations=json.dumps(annotations_data),
             debug_media=debug_media,
             num_people=max((len(f["annotations"]) for f in json_data["frames"]), default=0),
             media_type="video",
             total_frames=processed_count,
+            export_train_folder=export_folder
         )
 
     def export_train_folder(self, json_data, frame_files: list) -> Path:
