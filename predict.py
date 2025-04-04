@@ -305,7 +305,7 @@ class Predictor(BasePredictor):
             color_cap = cv2.VideoCapture(str(aligned_media))
         else:
             color_cap = None
-        with tqdm(desc="Processing Video") as pbar:
+        with tqdm(desc="Processing Video", total=int(cap.get(cv2.CAP_PROP_FRAME_COUNT))) as pbar:
             while cap.isOpened():
                 ret, frame = cap.read()
                 if not ret:
