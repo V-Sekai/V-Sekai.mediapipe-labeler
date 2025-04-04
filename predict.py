@@ -29,7 +29,7 @@ from PIL import Image
 import shutil
 from filters import OneEuroFilter
 from models import Output
-from full_body_processor import (
+from models import (
     MEDIAPIPE_KEYPOINT_NAMES)
 from person_processor import PersonProcessor
 from full_body_processor import FullBodyProcessor
@@ -43,10 +43,6 @@ class Predictor(BasePredictor):
                 "https://storage.googleapis.com/mediapipe-models/object_detector/ssd_mobilenet_v2/float32/1/ssd_mobilenet_v2.tflite",
             ),
             (
-                "face_landmarker.task",
-                "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
-            ),
-            (
                 "hand_landmarker.task",
                 "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
             ),
@@ -58,26 +54,6 @@ class Predictor(BasePredictor):
                 print(f"Downloading {filename}...")
                 urllib.request.urlretrieve(url, path)
 
-        self.face_processor = vision.FaceLandmarker.create_from_options(
-            vision.FaceLandmarkerOptions(
-                base_options=python.BaseOptions(
-                    model_asset_path="thirdparty/face_landmarker.task"
-                ),
-                output_face_blendshapes=True,
-                num_faces=1,
-                min_face_detection_confidence=0.7,
-            )
-        )
-        dummy_image = mp.Image(
-            image_format=mp.ImageFormat.SRGB,
-            data=np.zeros((100, 100, 3), dtype=np.uint8),
-        )
-        face_result = self.face_processor.detect(dummy_image)
-        self.blendshape_names = (
-            [bs.category_name for bs in face_result.face_blendshapes[0]]
-            if face_result.face_blendshapes
-            else []
-        )
         self.pose_processor = mp.solutions.pose.Pose(
             static_image_mode=True,
             model_complexity=2,
@@ -105,9 +81,6 @@ class Predictor(BasePredictor):
             }
             for _ in range(num_keypoints)
         ]
-        self.blendshape_filters = {
-            name: OneEuroFilter(30, 1.0, 0.7, 1.0) for name in self.blendshape_names
-        }
         self.hand_filters = {
             "left": [
                 {
@@ -192,12 +165,12 @@ class Predictor(BasePredictor):
             ],
         }
         for person_id, ann in enumerate(json_data["annotations"]):
-            # Ensure keypoints array has the correct length (44 keypoints × 3 values = 132 elements)
+            # Ensure keypoints array has exactly 44 keypoints (44 keypoints × 3 values = 132 elements)
             while len(ann["keypoints"]) < 132:
                 ann["keypoints"].extend([0.0, 0.0, 0])
             ann["keypoints"] = ann["keypoints"][:132]  # Truncate if longer
 
-            # Correct num_keypoints to count only labeled keypoints (v > 0)
+            # Update num_keypoints to count only labeled keypoints (v > 0)
             ann["num_keypoints"] = sum(1 for i in range(2, len(ann["keypoints"]), 3) if ann["keypoints"][i] > 0)
 
             # Clamp bbox height to fit within image bounds
@@ -215,6 +188,34 @@ class Predictor(BasePredictor):
                 elif v > 0:
                     valid_keypoints += 1
             ann["num_keypoints"] = valid_keypoints
+
+            hand_keypoints = ann["keypoints"][33 * 3:54 * 3]  # Keypoints 33-54
+            ann["keypoints"].extend(hand_keypoints)
+
+            # Truncate or pad keypoints to ensure exactly 44 keypoints (132 values)
+            while len(ann["keypoints"]) < 132:
+                ann["keypoints"].extend([0.0, 0.0, 0])
+            ann["keypoints"] = ann["keypoints"][:132]  # Truncate if longer
+
+            # Validate hand keypoints (indices 33–43)
+            for i in range(33 * 3, 44 * 3, 3):
+                x, y, v = ann["keypoints"][i:i+3]
+                if v > 0 and (x > json_data["image"]["width"] or y > json_data["image"]["height"]):
+                    ann["keypoints"][i:i+3] = [0.0, 0.0, 0]  # Set to default if out of bounds
+
+            # Validate right hand keypoints (indices 38–43)
+            for i in range(38 * 3, 44 * 3, 3):
+                x, y, v = ann["keypoints"][i:i+3]
+                if v > 0 and (x > json_data["image"]["width"] or y > json_data["image"]["height"]):
+                    ann["keypoints"][i:i+3] = [0.0, 0.0, 0]  # Set to default if out of bounds
+
+            # Clamp bounding box to fit within image dimensions
+            x, y, w, h = ann["bbox"]
+            if y + h > json_data["image"]["height"]:
+                h = json_data["image"]["height"] - y
+            if x + w > json_data["image"]["width"]:
+                w = json_data["image"]["width"] - x
+            ann["bbox"] = [x, y, w, h]
 
         if "categories" not in json_data:
             category_id = max([cat["id"] for cat in json_data.get("categories", [])], default=0) + 1

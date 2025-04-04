@@ -74,7 +74,6 @@ class PersonProcessor:
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=resized)
 
         try:
-            face_result = predictor.face_processor.detect(mp_image)
             pose_result = predictor.pose_processor.process(resized)
             hand_result = predictor.hand_processor.detect(mp_image)
         except Exception as e:
@@ -108,17 +107,6 @@ class PersonProcessor:
                         )
                     )
 
-        mapped_face = []
-        if face_result.face_landmarks:
-            mapped_face = [
-                Landmark(
-                    x=map_x(lmk.x * new_w) / orig_w,
-                    y=map_y(lmk.y * new_h) / orig_h,
-                    z=map_z(lmk.z),
-                )
-                for lmk in face_result.face_landmarks[0]
-            ]
-
         left_hand, right_hand = None, None
         if hand_result.hand_landmarks:
             for idx, handedness in enumerate(hand_result.handedness):
@@ -135,9 +123,6 @@ class PersonProcessor:
                 else:
                     right_hand = hand
 
-        blendshapes = (
-            face_result.face_blendshapes[0] if face_result.face_blendshapes else []
-        )
         return FullBodyProcessor.process_results(
-            mapped_pose, mapped_face, blendshapes, left_hand, right_hand, original_size
+            mapped_pose, left_hand, right_hand, original_size
         )
