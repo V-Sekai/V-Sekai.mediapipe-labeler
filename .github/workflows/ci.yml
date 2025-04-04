@@ -26,48 +26,11 @@ jobs:
             - name: Run tests (Cog) with video integration
               run: |
                   media_path="@thirdparty/20250401-0707-12.7226723.mp4"
-                  cog predict -i test_mode=True -i export_train=True -i "media_path=$media_path" | \
-                  tee \
-                    >(jq -r '.debug_media' > debug_output_video.zip) \
-                    >(jq -r '.annotations' > annotations_video.json) \
-                  >/dev/null
+                  cog predict -i test_mode=True -i export_train=True -i "media_path=$media_path"
             - name: Run tests (Cog) with image integration
               run: |
                   media_path="@thirdparty/image.jpg"
-                  cog predict -i export_train=True -i "media_path=$media_path" | \
-                  tee \
-                    >(jq -r '.debug_media' > debug_output_image.zip) \
-                    >(jq -r '.annotations' > annotations_image.json) \
-                  >/dev/null
-            - name: Upload test artifacts
-              uses: actions/upload-artifact@v4
-              with:
-                  name: test-artifacts
-                  path: |
-                      debug_output_video.zip
-                      annotations_video.json
-                      debug_output_image.zip
-                      annotations_image.json
-            # - name: Check artifact mime types
-            #   run: |
-            #       for file in debug_output_video.zip annotations_video.json debug_output_image.zip annotations_image.json; do
-            #         mime=$(file --mime-type -b "$file")
-            #         case "$file" in
-            #           *.zip)
-            #             expected="application/zip"
-            #             ;;
-            #           *.json)
-            #             expected="application/json"
-            #             ;;
-            #           *)
-            #             expected=""
-            #             ;;
-            #         esac
-            #         if [ "$mime" != "$expected" ]; then
-            #           echo "Error: $file has mime type $mime but expected $expected."
-            #           exit 1
-            #         fi
-            #       done
+                  cog predict -i export_train=True -i "media_path=$media_path"
             - name: Push to Replicate
               if: github.ref == 'refs/heads/main'
               run: |
