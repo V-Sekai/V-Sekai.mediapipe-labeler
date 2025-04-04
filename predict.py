@@ -193,6 +193,11 @@ class Predictor(BasePredictor):
                 for r in all_results
             ],
         }
+        for ann in json_data["annotations"]:
+            while len(ann["keypoints"]) < 44 * 3:
+                ann["keypoints"].extend([0.0, 0.0, 0])
+
+            ann["num_keypoints"] = sum(1 for i in range(2, len(ann["keypoints"]), 3) if ann["keypoints"][i] > 0)
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_img:
             Image.fromarray(img_np).save(tmp_img.name)
             original_train_img = Path(tmp_img.name)
