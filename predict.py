@@ -177,31 +177,26 @@ class Predictor(BasePredictor):
                     }
                 )
                 all_results.append(result)
-        with tempfile.NamedTemporaryFile(
-            suffix=".json", delete=False, mode="w"
-        ) as tmp_json:
-            json_data = {
-                "image": {"width": original_w, "height": original_h},
-                "annotations": [
-                    {
-                        "bbox": r["mediapipe"]["annotations"][0]["bbox"],
-                        "keypoints": r["mediapipe"]["annotations"][0]["keypoints"],
-                        "box": r["box"],
-                    }
-                    for r in all_results
-                ],
-            }
-            json.dump(json_data, tmp_json)
-            annotations_path = Path(tmp_json.name)
+        json_data = {
+            "image": {"width": original_w, "height": original_h},
+            "annotations": [
+                {
+                    "bbox": r["mediapipe"]["annotations"][0]["bbox"],
+                    "keypoints": r["mediapipe"]["annotations"][0]["keypoints"],
+                    "box": r["box"],
+                }
+                for r in all_results
+            ],
+        }
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_img:
             Image.fromarray(img_np).save(tmp_img.name)
             train_img = Path(tmp_img.name)
         debug_media = train_img
         export_folder = None
         if export_train:
-            export_folder = self.export_train_folder(annotations_path, [train_img])
+            export_folder = self.export_train_folder(json_data, [train_img])
         return Output(
-            annotations=annotations_path,
+            annotations=json.dumps(json_data),
             debug_media=debug_media,
             num_people=len(all_results),
             media_type="image",
@@ -287,27 +282,27 @@ class Predictor(BasePredictor):
                     break
         cap.release()
         debug_writer.release()
-        with tempfile.NamedTemporaryFile(suffix=".json", delete=False, mode="w") as tmp_json:
-            json.dump(json_data, tmp_json, indent=2)
-            json_path = Path(tmp_json.name)
-        # always recreate debug video from stored frames
         new_video = "recreated_debug_video.mp4"
         writer = cv2.VideoWriter(new_video, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
         for frm in debug_frames:
             writer.write(cv2.cvtColor(frm, cv2.COLOR_RGB2BGR))
         writer.release()
         debug_media = Path(new_video)
+        annotations_data = json_data
         return Output(
-            annotations=json_path,
+            annotations=json.dumps(annotations_data),  # change here: convert dict to str
             debug_media=debug_media,
             num_people=max((len(f["annotations"]) for f in json_data["frames"]), default=0),
             media_type="video",
             total_frames=processed_count,
         )
 
-    def export_train_folder(self, json_file: Path, frame_files: list) -> Path:
+    def export_train_folder(self, json_data, frame_files: list) -> Path:
         temp_dir = tempfile.mkdtemp(prefix="export_train_")
-        shutil.copy(json_file, os.path.join(temp_dir, "annotations.json"))
+        # Write json_data to a new file called annotations.json in temp_dir
+        json_path = os.path.join(temp_dir, "annotations.json")
+        with open(json_path, "w") as f:
+            json.dump(json_data, f, indent=2)
         train_dir = os.path.join(temp_dir, "train")
         os.makedirs(train_dir, exist_ok=True)
         for f in frame_files:

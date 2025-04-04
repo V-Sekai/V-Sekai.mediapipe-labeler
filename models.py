@@ -18,7 +18,7 @@ from pathlib import Path
 
 
 class Output(BaseModel):
-    annotations: Path
+    annotations: str
     debug_media: Path
     num_people: int
     media_type: str
