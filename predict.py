@@ -302,27 +302,47 @@ class Predictor(BasePredictor):
         )
 
     def export_train_folder(self, json_data, frame_files: list) -> Path:
-        # Convert json_data into COCO format
         from full_body_processor import MEDIAPIPE_KEYPOINT_NAMES, FullBodyProcessor
+        from datetime import datetime
+        current_time = datetime.now().isoformat()
         def convert_to_coco(json_data, frame_files):
-            coco = {"images": [], "annotations": [], "categories": []}
+            coco = {
+                "info": {
+                    "year": datetime.now().year,
+                    "version": "4",
+                    "description": "Exported from roboflow.com",
+                    "contributor": "K. S. Ernest (iFire) Lee <ernest.lee@chibifire.com>",
+                    "url": "https://app.roboflow.com/datasets/person-keyposition-ecazz",
+                    "date_created": current_time
+                },
+                "licenses": [
+                    {"id": 1, "url": "", "name": "Unknown"}
+                ],
+                "categories": [],
+                "images": [],
+                "annotations": []
+            }
             category = {
                 "id": 1,
-                "name": "person",
-                "supercategory": "person",
+                "name": "person-full-body-facs",
+                "supercategory": "persons",
                 "keypoints": MEDIAPIPE_KEYPOINT_NAMES,
                 "skeleton": FullBodyProcessor.SKELETON_CONNECTIONS,
             }
             coco["categories"].append(category)
             ann_id = 1
-            image_id = 1
+            image_id = 0
             if "image" in json_data:
+                image_id = 0
                 file_name = os.path.basename(frame_files[0])
                 image_info = {
                     "id": image_id,
+                    "license": 1,
                     "width": json_data["image"]["width"],
                     "height": json_data["image"]["height"],
                     "file_name": file_name,
+                    "date_captured": current_time,
+                    "extra": {}
                 }
                 coco["images"].append(image_info)
                 for ann in json_data["annotations"]:
@@ -334,7 +354,7 @@ class Predictor(BasePredictor):
                         "area": ann["bbox"][2] * ann["bbox"][3],
                         "iscrowd": 0,
                         "keypoints": ann["keypoints"],
-                        "num_keypoints": len([k for k in ann["keypoints"] if k != 0]),
+                        "num_keypoints": len([k for k in ann["keypoints"] if k != 0])
                     }
                     coco["annotations"].append(coco_ann)
                     ann_id += 1
@@ -343,9 +363,12 @@ class Predictor(BasePredictor):
                     file_name = "frame_{:06d}.png".format(frame_ann["frame_number"])
                     image_info = {
                         "id": image_id,
+                        "license": 1,
                         "width": json_data["metadata"]["width"],
                         "height": json_data["metadata"]["height"],
                         "file_name": file_name,
+                        "date_captured": current_time,
+                        "extra": {}
                     }
                     coco["images"].append(image_info)
                     for ann in frame_ann["annotations"]:
@@ -357,7 +380,7 @@ class Predictor(BasePredictor):
                             "area": ann["bbox"][2] * ann["bbox"][3],
                             "iscrowd": 0,
                             "keypoints": ann["keypoints"],
-                            "num_keypoints": len([k for k in ann["keypoints"] if k != 0]),
+                            "num_keypoints": len([k for k in ann["keypoints"] if k != 0])
                         }
                         coco["annotations"].append(coco_ann)
                         ann_id += 1
@@ -365,16 +388,100 @@ class Predictor(BasePredictor):
             return coco
 
         coco_data = convert_to_coco(json_data, frame_files)
-        # Create temporary directory and write COCO annotations.json
+        # Create temporary directory and write COCO JSON inside train folder
         with tempfile.TemporaryDirectory(prefix="export_train_") as temp_dir:
-            json_path = os.path.join(temp_dir, "annotations.json")
-            with open(json_path, "w") as f:
-                json.dump(coco_data, f, indent=2)
             train_dir = os.path.join(temp_dir, "train")
             os.makedirs(train_dir, exist_ok=True)
+            # Copy all frame files into the train folder
             for f in frame_files:
                 shutil.copy(f, os.path.join(train_dir, os.path.basename(f)))
-            # Create a NamedTemporaryFile for the zip
+            # Write the COCO JSON to _annotations.coco.json inside train folder
+            json_path = os.path.join(train_dir, "_annotations.coco.json")
+            with open(json_path, "w") as f:
+                json.dump(coco_data, f, indent=2)
+            # Create a NamedTemporaryFile for the zip archive
+            with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp_zip:
+                zip_base = tmp_zip.name.replace(".zip", "")
+            zip_path = shutil.make_archive(base_name=zip_base, format='zip', root_dir=temp_dir)
+            return Path(zip_path)
+            category = {
+                "id": 1,
+                "name": "person-full-body-facs",
+                "supercategory": "persons",
+                "keypoints": MEDIAPIPE_KEYPOINT_NAMES,
+                "skeleton": FullBodyProcessor.SKELETON_CONNECTIONS,
+            }
+            coco["categories"].append(category)
+            ann_id = 1
+            image_id = 0
+            if "image" in json_data:
+                image_id = 0
+                file_name = os.path.basename(frame_files[0])
+                image_info = {
+                    "id": image_id,
+                    "license": 1,
+                    "width": json_data["image"]["width"],
+                    "height": json_data["image"]["height"],
+                    "file_name": file_name,
+                    "date_captured": "2025-04-04T07:46:16+00:00",
+                    "extra": {}
+                }
+                coco["images"].append(image_info)
+                for ann in json_data["annotations"]:
+                    coco_ann = {
+                        "id": ann_id,
+                        "image_id": image_id,
+                        "category_id": 1,
+                        "bbox": ann["bbox"],
+                        "area": ann["bbox"][2] * ann["bbox"][3],
+                        "iscrowd": 0,
+                        "keypoints": ann["keypoints"],
+                        "num_keypoints": len([k for k in ann["keypoints"] if k != 0])
+                    }
+                    coco["annotations"].append(coco_ann)
+                    ann_id += 1
+            else:
+                for frame_ann in json_data["frames"]:
+                    file_name = "frame_{:06d}.png".format(frame_ann["frame_number"])
+                    image_info = {
+                        "id": image_id,
+                        "license": 1,
+                        "width": json_data["metadata"]["width"],
+                        "height": json_data["metadata"]["height"],
+                        "file_name": file_name,
+                        "date_captured": "2025-04-04T07:46:16+00:00",
+                        "extra": {}
+                    }
+                    coco["images"].append(image_info)
+                    for ann in frame_ann["annotations"]:
+                        coco_ann = {
+                            "id": ann_id,
+                            "image_id": image_id,
+                            "category_id": 1,
+                            "bbox": ann["bbox"],
+                            "area": ann["bbox"][2] * ann["bbox"][3],
+                            "iscrowd": 0,
+                            "keypoints": ann["keypoints"],
+                            "num_keypoints": len([k for k in ann["keypoints"] if k != 0])
+                        }
+                        coco["annotations"].append(coco_ann)
+                        ann_id += 1
+                    image_id += 1
+            return coco
+
+        coco_data = convert_to_coco(json_data, frame_files)
+        # Create temporary directory and write COCO JSON inside train folder
+        with tempfile.TemporaryDirectory(prefix="export_train_") as temp_dir:
+            train_dir = os.path.join(temp_dir, "train")
+            os.makedirs(train_dir, exist_ok=True)
+            # Copy all frame files into the train folder
+            for f in frame_files:
+                shutil.copy(f, os.path.join(train_dir, os.path.basename(f)))
+            # Write the COCO JSON to _annotations.coco.json inside train folder
+            json_path = os.path.join(train_dir, "_annotations.coco.json")
+            with open(json_path, "w") as f:
+                json.dump(coco_data, f, indent=2)
+            # Create a NamedTemporaryFile for the zip archive
             with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp_zip:
                 zip_base = tmp_zip.name.replace(".zip", "")
             zip_path = shutil.make_archive(base_name=zip_base, format='zip', root_dir=temp_dir)
