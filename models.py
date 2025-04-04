@@ -23,3 +23,4 @@ class Output(BaseModel):
     num_people: int
     media_type: str
     total_frames: Optional[int] = None
+    export_train_folder: Optional[Path] = None
