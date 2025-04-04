@@ -191,7 +191,7 @@ class Predictor(BasePredictor):
                 for r in all_results
             ],
         }
-        for ann in json_data["annotations"]:
+        for person_id, ann in enumerate(json_data["annotations"]):
             # Ensure keypoints array has the correct length (44 keypoints × 3 values = 132 elements)
             while len(ann["keypoints"]) < 132:
                 ann["keypoints"].extend([0.0, 0.0, 0])
@@ -200,20 +200,32 @@ class Predictor(BasePredictor):
             # Correct num_keypoints to count only labeled keypoints (v > 0)
             ann["num_keypoints"] = sum(1 for i in range(2, len(ann["keypoints"]), 3) if ann["keypoints"][i] > 0)
 
-            # Add categories section if missing
-            if "categories" not in json_data:
-                json_data["categories"] = [
-                    {
-                        "id": 1,
-                        "name": "person",
-                        "keypoints": [
-                            "nose", "left_eye_inner", "left_eye", "left_eye_outer", "right_eye_inner", "right_eye", "right_eye_outer", "left_ear", "right_ear", "left_shoulder", "right_shoulder", "left_elbow", "right_elbow", "left_wrist", "right_wrist", "left_pinky", "right_pinky", "left_index", "right_index", "left_thumb", "right_thumb", "left_hip", "right_hip", "left_knee", "right_knee", "left_ankle", "right_ankle", "left_heel", "right_heel", "left_foot_index", "right_foot_index", "mid_hip", "mid_shoulder", "left_big_toe", "right_big_toe", "left_small_toe", "right_small_toe", "left_heel_back", "right_heel_back", "left_ankle_back", "right_ankle_back", "left_knee_back", "right_knee_back"
-                        ],
-                        "skeleton": [
-                            [0, 1], [1, 2], [2, 3], [3, 4], [4, 5], [5, 6], [6, 7], [7, 8], [8, 9], [9, 10], [10, 11], [11, 12], [12, 13], [13, 14], [14, 15], [15, 16], [16, 17], [17, 18], [18, 19], [19, 20], [20, 21], [21, 22], [22, 23], [23, 24], [24, 25], [25, 26], [26, 27], [27, 28], [28, 29], [29, 30], [30, 31], [31, 32], [32, 33], [33, 34], [34, 35], [35, 36], [36, 37], [37, 38], [38, 39], [39, 40], [40, 41], [41, 42], [42, 43]
-                        ]
-                    }
-                ]
+            # Clamp bbox height to fit within image bounds
+            x, y, w, h = ann["bbox"]
+            if y + h > json_data["image"]["height"]:
+                h = json_data["image"]["height"] - y
+            ann["bbox"] = [x, y, w, h]
+
+            # Clamp out-of-bounds keypoints and update num_keypoints
+            valid_keypoints = 0
+            for i in range(0, len(ann["keypoints"]), 3):
+                x, y, v = ann["keypoints"][i:i+3]
+                if v > 0 and (x > json_data["image"]["width"] or y > json_data["image"]["height"]):
+                    ann["keypoints"][i:i+3] = [0.0, 0.0, 0]
+                elif v > 0:
+                    valid_keypoints += 1
+            ann["num_keypoints"] = valid_keypoints
+
+        if "categories" not in json_data:
+            category_id = max([cat["id"] for cat in json_data.get("categories", [])], default=0) + 1
+            json_data["categories"] = [
+                {
+                    "id": category_id,
+                    "name": "person",
+                    "keypoints": MEDIAPIPE_KEYPOINT_NAMES,
+                    "skeleton": FullBodyProcessor.SKELETON_CONNECTIONS,
+                }
+            ]
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_img:
             Image.fromarray(img_np).save(tmp_img.name)
             original_train_img = Path(tmp_img.name)
