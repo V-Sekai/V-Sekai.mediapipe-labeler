@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from models import (
-    MEDIAPIPE_KEYPOINT_NAMES)
+    MEDIAPIPE_KEYPOINT_NAMES, SKELETON_CONNECTIONS)
 
 # Define Mediapipe hand mappings for left and right hands
 LEFT_HAND_MAPPING = {
@@ -65,17 +65,6 @@ RIGHT_HAND_MAPPING = {
 }
 
 class FullBodyProcessor:
-    SKELETON_CONNECTIONS = [
-        [0, 1], [1, 2], [2, 3], [3, 7], [0, 4], [4, 5], [5, 6], [6, 8],
-        [9, 10], [11, 12], [12, 14], [14, 16], [11, 13], [13, 15], [15, 17],
-        [12, 24], [24, 26], [26, 28], [11, 23], [23, 25], [25, 27],
-        [28, 30], [30, 32], [27, 29], [29, 31],
-        # Left hand connections
-        [33, 34], [34, 35], [35, 36], [36, 37],
-        # Right hand connections
-        [38, 39], [39, 40], [40, 41], [41, 42]
-    ]
-
     @staticmethod
     def process_results(pose, left_hand, right_hand, image_size):
         return {
@@ -127,7 +116,7 @@ class FullBodyProcessor:
                     "name": "person",
                     "supercategory": "person",
                     "keypoints": MEDIAPIPE_KEYPOINT_NAMES,
-                    "skeleton": FullBodyProcessor.SKELETON_CONNECTIONS,
+                    "skeleton": SKELETON_CONNECTIONS,
                 }
             ],
         }

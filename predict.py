@@ -30,7 +30,7 @@ import shutil
 from filters import OneEuroFilter
 from models import Output
 from models import (
-    MEDIAPIPE_KEYPOINT_NAMES)
+    MEDIAPIPE_KEYPOINT_NAMES, SKELETON_CONNECTIONS)
 from person_processor import PersonProcessor
 from full_body_processor import FullBodyProcessor
 
@@ -224,7 +224,7 @@ class Predictor(BasePredictor):
                     "id": category_id,
                     "name": "person",
                     "keypoints": MEDIAPIPE_KEYPOINT_NAMES,
-                    "skeleton": FullBodyProcessor.SKELETON_CONNECTIONS,
+                    "skeleton": SKELETON_CONNECTIONS,
                 }
             ]
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_img:
@@ -434,7 +434,7 @@ class Predictor(BasePredictor):
                 "name": "person-full-body-facs",
                 "supercategory": "persons",
                 "keypoints": MEDIAPIPE_KEYPOINT_NAMES,
-                "skeleton": FullBodyProcessor.SKELETON_CONNECTIONS,
+                "skeleton": SKELETON_CONNECTIONS,
             }
             coco["categories"].append(category)
             ann_id = 1
@@ -562,7 +562,7 @@ class Predictor(BasePredictor):
 
     def draw_skeleton(self, draw, keypoints, colors):
         kp_dict = {kp["id"]: kp for kp in keypoints}
-        for connection in FullBodyProcessor.SKELETON_CONNECTIONS:
+        for connection in SKELETON_CONNECTIONS:
             if connection[0] in kp_dict and connection[1] in kp_dict:
                 parent = kp_dict[connection[0]]
                 child = kp_dict[connection[1]]
