@@ -194,17 +194,40 @@ class Predictor(BasePredictor):
         }
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_img:
             Image.fromarray(img_np).save(tmp_img.name)
-            train_img = Path(tmp_img.name)
-        debug_media = train_img
-        export_folder = None
+            original_train_img = Path(tmp_img.name)
+        aligned_img_np = img_np
+        annotated_aligned = self.annotate_video_frame(aligned_img_np, all_results)
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_aligned:
+            Image.fromarray(annotated_aligned).save(tmp_aligned.name)
+            aligned_train_img = Path(tmp_aligned.name)
+        original_export_folder = None
+        aligned_export_folder = None
         if export_train:
-            export_folder = self.export_train_folder(json_data, [train_img])
+            original_export_folder = self.export_train_folder(json_data, [original_train_img])
+            aligned_export_folder = self.export_train_folder(json_data, [aligned_train_img])
+        # Create annotated image from original input
+        annotated_original = self.annotate_video_frame(img_np, all_results)
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_orig:
+            Image.fromarray(annotated_original).save(tmp_orig.name)
+            original_debug_media = Path(tmp_orig.name)
+        # If an aligned image is provided, load it; otherwise use the original
+        try:
+            aligned = Image.open(str(self.inputs.get("aligned_media")))
+            aligned_img_np = np.array(aligned.convert("RGB"))
+        except Exception:
+            aligned_img_np = img_np
+        annotated_aligned = self.annotate_video_frame(aligned_img_np, all_results)
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_aligned:
+            Image.fromarray(annotated_aligned).save(tmp_aligned.name)
+            aligned_debug_media = Path(tmp_aligned.name)
         return Output(
             annotations=json.dumps(json_data),
-            debug_media=debug_media,
+            debug_media=original_debug_media,          # original annotated image
+            aligned_debug_media=aligned_debug_media,   # aligned annotated image
             num_people=len(all_results),
             media_type="image",
-            export_train_folder=export_folder
+            export_train_folder=original_export_folder,
+            export_aligned_train_folder=aligned_export_folder
         )
 
     def process_video(
@@ -224,6 +247,9 @@ class Predictor(BasePredictor):
             },
             "frames": [],
         }
+        # Prepare lists for training frames separately
+        original_train_frames = []
+        aligned_train_frames = []
         debug_video_path = "annotated_video.mp4"
         debug_writer = cv2.VideoWriter(
             debug_video_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height)
@@ -232,10 +258,19 @@ class Predictor(BasePredictor):
             color_cap = cv2.VideoCapture(str(aligned_media))
         else:
             color_cap = None
-        train_frames = []
         debug_frames = []  # new list to store annotated frames
         frame_count = 0
         processed_count = 0
+        # Prepare separate writers and lists for original and aligned annotated frames
+        original_debug_frames = []
+        aligned_debug_frames = []
+        debug_writer = cv2.VideoWriter(
+            "temp_annotated_video.mp4", cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height)
+        )
+        if aligned_media is not None:
+            color_cap = cv2.VideoCapture(str(aligned_media))
+        else:
+            color_cap = None
         with tqdm(total=total_frames, desc="Processing Video") as pbar:
             while cap.isOpened():
                 ret, frame = cap.read()
@@ -283,14 +318,23 @@ class Predictor(BasePredictor):
                             for r in frame_raw
                         ],
                     })
-                    frame_color_rgb = cv2.cvtColor(frame_color, cv2.COLOR_BGR2RGB)
-                    annotated_frame = self.annotate_video_frame(frame_color_rgb, frame_filtered)
-                    debug_writer.write(cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR))
-                    debug_frames.append(annotated_frame)  # store the annotated frame
+                    original_frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    aligned_frame_rgb = cv2.cvtColor(frame_color, cv2.COLOR_BGR2RGB)
+                    # Process annotations on both original and aligned frames
+                    annotated_original = self.annotate_video_frame(original_frame_rgb, frame_filtered)
+                    annotated_aligned = self.annotate_video_frame(aligned_frame_rgb, frame_filtered)
+                    debug_writer.write(cv2.cvtColor(annotated_aligned, cv2.COLOR_RGB2BGR))
+                    original_debug_frames.append(annotated_original)
+                    aligned_debug_frames.append(annotated_aligned)
                     if export_train:
-                        frame_png = Path(tempfile.NamedTemporaryFile(suffix=".png", delete=False).name)
-                        Image.fromarray(frame_color_rgb).save(frame_png)
-                        train_frames.append(frame_png)
+                        # Save original training frame
+                        orig_png = Path(tempfile.NamedTemporaryFile(suffix=".png", delete=False).name)
+                        Image.fromarray(original_frame_rgb).save(orig_png)
+                        original_train_frames.append(orig_png)
+                        # Save aligned training frame
+                        aligned_png = Path(tempfile.NamedTemporaryFile(suffix=".png", delete=False).name)
+                        Image.fromarray(aligned_frame_rgb).save(aligned_png)
+                        aligned_train_frames.append(aligned_png)
                     processed_count += 1
                     pbar.update(1)
                 frame_count += 1
@@ -305,18 +349,32 @@ class Predictor(BasePredictor):
         for frm in debug_frames:
             writer.write(cv2.cvtColor(frm, cv2.COLOR_RGB2BGR))
         writer.release()
-        debug_media = Path(new_video)
         annotations_data = json_data
-        export_folder = None
+        original_export_folder = None
+        aligned_export_folder = None
         if export_train:
-            export_folder = self.export_train_folder(json_data, train_frames)
+            original_export_folder = self.export_train_folder(json_data, original_train_frames)
+            aligned_export_folder = self.export_train_folder(json_data, aligned_train_frames)
+        # Write separate videos for original and aligned annotated outputs
+        original_video = "original_debug_video.mp4"
+        writer_orig = cv2.VideoWriter(original_video, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
+        for frm in original_debug_frames:
+            writer_orig.write(cv2.cvtColor(frm, cv2.COLOR_RGB2BGR))
+        writer_orig.release()
+        aligned_video = "aligned_debug_video.mp4"
+        writer_aligned = cv2.VideoWriter(aligned_video, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
+        for frm in aligned_debug_frames:
+            writer_aligned.write(cv2.cvtColor(frm, cv2.COLOR_RGB2BGR))
+        writer_aligned.release()
         return Output(
             annotations=json.dumps(annotations_data),
-            debug_media=debug_media,
+            debug_media=Path(original_video),         # original annotated video
+            aligned_debug_media=Path(aligned_video),     # aligned annotated video
             num_people=max((len(f["annotations"]) for f in json_data["frames"]), default=0),
             media_type="video",
             total_frames=processed_count,
-            export_train_folder=export_folder
+            export_train_folder=original_export_folder,
+            export_aligned_train_folder=aligned_export_folder
         )
 
     def export_train_folder(self, json_data, frame_files: list) -> Path:
