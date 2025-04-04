@@ -129,7 +129,7 @@ class Predictor(BasePredictor):
 
     def predict(
         self,
-        media_path: Path = Input(description="Input image or video file"),
+        media_path: Path = Input(description="Input image, video, or training zip file"),
         max_people: int = Input(
             description="Maximum number of people to detect (1-100)",
             ge=1,
@@ -150,10 +150,11 @@ class Predictor(BasePredictor):
             default=None
         )
     ) -> Output:
-        if str(media_path).lower().endswith((".mp4", ".avi", ".mov", ".mkv")):
-            return self.process_video(
-                media_path, max_people, frame_sample_rate, test_mode, export_train, aligned_media
-            )
+        media_lower = str(media_path).lower()
+        if media_lower.endswith(".zip"):
+            return self.process_training_dataset(media_path)
+        elif media_lower.endswith((".mp4", ".avi", ".mov", ".mkv")):
+            return self.process_video(media_path, max_people, frame_sample_rate, test_mode, export_train, aligned_media)
         else:
             return self.process_image(media_path, max_people, test_mode, export_train)
 
@@ -626,13 +627,12 @@ class Predictor(BasePredictor):
         updated_annotation_path = os.path.join(os.path.dirname(annotation_path), '_annotations_updated.coco.json')
         with open(updated_annotation_path, 'w') as f:
             json.dump(coco_data, f, indent=2)
-
-            # Create a new zip archive of the training dataset folder (preserving the original structure)
-            base_name = tempfile.NamedTemporaryFile(suffix=".zip", delete=False).name.replace(".zip", "")
-            new_zip_path = shutil.make_archive(base_name=base_name, format='zip', root_dir=os.path.dirname(annotation_path))
-            return Output(
-                annotations=json.dumps(coco_data),
-                debug_media=Path(new_zip_path),
-                num_people=len(coco_data.get("images", [])),
-                media_type="training_dataset"
-            )
+        # Create a new zip archive of the training dataset folder (preserving the original structure)
+        base_name = tempfile.NamedTemporaryFile(suffix=".zip", delete=False).name.replace(".zip", "")
+        new_zip_path = shutil.make_archive(base_name=base_name, format='zip', root_dir=os.path.dirname(annotation_path))
+        return Output(
+            annotations=json.dumps(coco_data),
+            debug_media=Path(new_zip_path),
+            num_people=len(coco_data.get("images", [])),
+            media_type="training_dataset"
+        )
