@@ -13,6 +13,8 @@ This is a Mediapipe workflow that writes the Mediapipe skeleton, including hands
 
 **Model File**: [Link to Model Card Blendshape V2.pdf](https://storage.googleapis.com/mediapipe-assets/Model%20Card%20Blendshape%20V2.pdf)
 
+**COCO Keypoints File**: https://roboflow.com/formats/coco-keypoint
+
 # Install
 
 ```zsh
