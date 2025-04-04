@@ -31,6 +31,7 @@ from PIL import Image
 from typing import Any, List, Tuple, Optional
 import shutil
 from filters import OneEuroFilter
+from models import Output
 
 MEDIAPIPE_KEYPOINT_NAMES = [
     "nose",
@@ -115,15 +116,6 @@ RIGHT_HAND_VRM_MAPPING = {
     18: "rightLittleIntermediate",
     19: "rightLittleDistal",
 }
-
-
-class Output(BaseModel):
-    annotations: Path
-    debug_media: Path
-    num_people: int
-    media_type: str
-    total_frames: Optional[int] = None
-
 
 class PersonProcessor:
     @staticmethod
