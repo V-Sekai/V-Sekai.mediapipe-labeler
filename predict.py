@@ -60,7 +60,7 @@ class LowPassFilter:
     def lastValue(self) -> float:
         return self.__y
 
-    def lastFilteredValue(self) -> float:
+    def lastFilteredValue() -> float:
         return self.__s
 
     def reset(self) -> None:
@@ -675,10 +675,11 @@ class Predictor(BasePredictor):
             json.dump(json_data, tmp_json)
             annotations_path = Path(tmp_json.name)
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_img:
-            Image.fromarray(annotated_frame).save(tmp_img.name)
-            debug_media = Path(tmp_img.name)
+            Image.fromarray(img_np).save(tmp_img.name)
+            train_img = Path(tmp_img.name)
+        debug_media = train_img
         if export_train:
-            folder_path = self.export_train_folder(annotations_path, [debug_media])
+            folder_path = self.export_train_folder(annotations_path, [train_img])
             debug_media = folder_path
         return Output(
             annotations=annotations_path,
@@ -757,7 +758,7 @@ class Predictor(BasePredictor):
                     debug_frames.append(annotated_frame)  # store the annotated frame
                     if export_train:
                         frame_png = Path(tempfile.NamedTemporaryFile(suffix=".png", delete=False).name)
-                        Image.fromarray(annotated_frame).save(frame_png)
+                        Image.fromarray(img_np).save(frame_png)
                         train_frames.append(frame_png)
                     processed_count += 1
                     pbar.update(1)
