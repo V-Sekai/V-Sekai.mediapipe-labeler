@@ -584,7 +584,6 @@ class Predictor(BasePredictor):
                     }
                 )
                 all_results.append(result)
-        annotated_frame = self.annotate_video_frame(img_np, all_results)
         with tempfile.NamedTemporaryFile(
             suffix=".json", delete=False, mode="w"
         ) as tmp_json:
