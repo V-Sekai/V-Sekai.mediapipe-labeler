@@ -32,7 +32,6 @@ from models import Output
 from models import (
     MEDIAPIPE_KEYPOINT_NAMES, SKELETON_CONNECTIONS)
 from person_processor import PersonProcessor
-from full_body_processor import FullBodyProcessor
 
 class Predictor(BasePredictor):
     def setup(self):
@@ -409,7 +408,7 @@ class Predictor(BasePredictor):
         )
 
     def export_train_folder(self, json_data, frame_files: list) -> Path:
-        from full_body_processor import MEDIAPIPE_KEYPOINT_NAMES, FullBodyProcessor
+        from full_body_processor import MEDIAPIPE_KEYPOINT_NAMES
         from datetime import datetime
         current_time = datetime.now().isoformat()
         def convert_to_coco(json_data, frame_files):
@@ -423,7 +422,11 @@ class Predictor(BasePredictor):
                     "date_created": current_time
                 },
                 "licenses": [
-                    {"id": 1, "url": "", "name": "Unknown"}
+                    {
+                        "id": 1,
+                        "url": "https://creativecommons.org/licenses/by/4.0/",
+                        "name": "Creative Commons Attribution 4.0 International (CC BY 4.0)"
+                    }
                 ],
                 "categories": [],
                 "images": [],
