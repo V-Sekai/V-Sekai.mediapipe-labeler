@@ -145,10 +145,14 @@ class Predictor(BasePredictor):
         export_train: bool = Input(
             description="Export training zip containing json annotations and frame pngs", default=True
         ),
+        aligned_media: Path = Input(
+            description="Optional video that is aligned with the input video's annotations", 
+            default=None
+        )
     ) -> Output:
         if str(media_path).lower().endswith((".mp4", ".avi", ".mov", ".mkv")):
             return self.process_video(
-                media_path, max_people, frame_sample_rate, test_mode, export_train
+                media_path, max_people, frame_sample_rate, test_mode, export_train, aligned_media
             )
         else:
             return self.process_image(media_path, max_people, test_mode, export_train)
@@ -204,7 +208,7 @@ class Predictor(BasePredictor):
         )
 
     def process_video(
-        self, video_path: Path, max_people: int, frame_sample_rate: int, test_mode: bool, export_train: bool
+        self, video_path: Path, max_people: int, frame_sample_rate: int, test_mode: bool, export_train: bool, aligned_media: Path = None
     ) -> Output:
         cap = cv2.VideoCapture(str(video_path))
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -224,6 +228,10 @@ class Predictor(BasePredictor):
         debug_writer = cv2.VideoWriter(
             debug_video_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height)
         )
+        if aligned_media is not None:
+            color_cap = cv2.VideoCapture(str(aligned_media))
+        else:
+            color_cap = None
         train_frames = []
         debug_frames = []  # new list to store annotated frames
         frame_count = 0
@@ -233,6 +241,13 @@ class Predictor(BasePredictor):
                 ret, frame = cap.read()
                 if not ret:
                     break
+                # Read corresponding color frame if available
+                if color_cap is not None:
+                    ret_color, frame_color = color_cap.read()
+                    if not ret_color:
+                        frame_color = frame
+                else:
+                    frame_color = frame
                 if frame_count % frame_sample_rate == 0:
                     img_np = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                     boxes = PersonProcessor.detect_people(img_np, max_people)
@@ -268,12 +283,13 @@ class Predictor(BasePredictor):
                             for r in frame_raw
                         ],
                     })
-                    annotated_frame = self.annotate_video_frame(img_np, frame_filtered)
+                    frame_color_rgb = cv2.cvtColor(frame_color, cv2.COLOR_BGR2RGB)
+                    annotated_frame = self.annotate_video_frame(frame_color_rgb, frame_filtered)
                     debug_writer.write(cv2.cvtColor(annotated_frame, cv2.COLOR_RGB2BGR))
                     debug_frames.append(annotated_frame)  # store the annotated frame
                     if export_train:
                         frame_png = Path(tempfile.NamedTemporaryFile(suffix=".png", delete=False).name)
-                        Image.fromarray(img_np).save(frame_png)
+                        Image.fromarray(frame_color_rgb).save(frame_png)
                         train_frames.append(frame_png)
                     processed_count += 1
                     pbar.update(1)
@@ -282,6 +298,8 @@ class Predictor(BasePredictor):
                     break
         cap.release()
         debug_writer.release()
+        if color_cap is not None:
+            color_cap.release()
         new_video = "recreated_debug_video.mp4"
         writer = cv2.VideoWriter(new_video, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
         for frm in debug_frames:
