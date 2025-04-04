@@ -302,18 +302,18 @@ class Predictor(BasePredictor):
         )
 
     def export_train_folder(self, json_data, frame_files: list) -> Path:
-        temp_dir = tempfile.mkdtemp(prefix="export_train_")
-        # Write json_data to a new file called annotations.json in temp_dir
-        json_path = os.path.join(temp_dir, "annotations.json")
-        with open(json_path, "w") as f:
-            json.dump(json_data, f, indent=2)
-        train_dir = os.path.join(temp_dir, "train")
-        os.makedirs(train_dir, exist_ok=True)
-        for f in frame_files:
-            shutil.copy(f, os.path.join(train_dir, os.path.basename(f)))
-        zip_base = os.path.join(tempfile.gettempdir(), "export_train_archive")
-        zip_path = shutil.make_archive(base_name=zip_base, format='zip', root_dir=temp_dir)
-        return Path(zip_path)
+        with tempfile.TemporaryDirectory(prefix="export_train_") as temp_dir:
+            json_path = os.path.join(temp_dir, "annotations.json")
+            with open(json_path, "w") as f:
+                json.dump(json_data, f, indent=2)
+            train_dir = os.path.join(temp_dir, "train")
+            os.makedirs(train_dir, exist_ok=True)
+            for f in frame_files:
+                shutil.copy(f, os.path.join(train_dir, os.path.basename(f)))
+            with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp_zip:
+                zip_base = tmp_zip.name.replace(".zip", "")
+            zip_path = shutil.make_archive(base_name=zip_base, format='zip', root_dir=temp_dir)
+            return Path(zip_path)
 
     def apply_filters(self, person_data, timestamp):
         for kp in person_data["fullbody"]["keypoints"]:
