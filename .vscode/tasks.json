@@ -1,4 +1,3 @@
-
 {
     // See https://go.microsoft.com/fwlink/?LinkId=733558
     // for the documentation about the tasks.json format
@@ -7,12 +6,17 @@
         {
             "label": "cog predict video",
             "type": "shell",
-            "command": "cog predict -i test_mode=True -i export_train=True -i 'media_path=@thirdparty/20250401-0707-12.7226723.mp4'"
+            "command": "cog predict -i test_mode=True -i export_train=True -i 'media_path=@thirdparty/20250401-0707-12.7226723.mp4'  > video_output.json"
         },
         {
             "label": "cog predict image",
             "type": "shell",
-            "command": "cog predict -i test_mode=True -i export_train=True -i 'media_path=@thirdparty/image.jpg'"
+            "command": "cog predict -i test_mode=True -i export_train=True -i 'media_path=@thirdparty/image.jpg' > image_output.json"
+        },
+        {
+            "label": "cog predict training dataset",
+            "type": "shell",
+            "command": "cog predict -i test_mode=True -i export_train=True -i 'media_path=@thirdparty/training_dataset.zip' > annotation_output.json"
         }
     ]
 }
