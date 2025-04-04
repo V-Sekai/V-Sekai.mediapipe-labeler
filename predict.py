@@ -238,7 +238,6 @@ class Predictor(BasePredictor):
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         fps = cap.get(cv2.CAP_PROP_FPS)
-        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         json_data = {
             "metadata": {
                 "width": width,
@@ -272,7 +271,7 @@ class Predictor(BasePredictor):
             color_cap = cv2.VideoCapture(str(aligned_media))
         else:
             color_cap = None
-        with tqdm(total=total_frames, desc="Processing Video") as pbar:
+        with tqdm(desc="Processing Video") as pbar:
             while cap.isOpened():
                 ret, frame = cap.read()
                 if not ret:
@@ -373,7 +372,6 @@ class Predictor(BasePredictor):
             aligned_debug_media=Path(aligned_video),     # aligned annotated video
             num_people=max((len(f["annotations"]) for f in json_data["frames"]), default=0),
             media_type="video",
-            total_frames=processed_count,
             export_train_folder=original_export_folder,
             export_aligned_train_folder=aligned_export_folder
         )
