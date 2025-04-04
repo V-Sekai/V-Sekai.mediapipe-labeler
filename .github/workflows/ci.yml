@@ -28,7 +28,7 @@ jobs:
                   media_path="@thirdparty/20250401-0707-12.7226723.mp4"
                   cog predict -i test_mode=True -i export_train=True -i "media_path=$media_path" | \
                   tee \
-                    >(jq -r '.debug_media' | xargs -I {} cp {} debug_output_video.zip) \
+                    >(jq -r '.debug_media' > debug_output_video.zip) \
                     >(jq -r '.annotations' > annotations_video.json) \
                   >/dev/null
             - name: Run tests (Cog) with image integration
@@ -36,7 +36,7 @@ jobs:
                   media_path="@thirdparty/image.jpg"
                   cog predict -i export_train=True -i "media_path=$media_path" | \
                   tee \
-                    >(jq -r '.debug_media' | xargs -I {} cp {} debug_output_image.zip) \
+                    >(jq -r '.debug_media' > debug_output_image.zip) \
                     >(jq -r '.annotations' > annotations_image.json) \
                   >/dev/null
             - name: Upload test artifacts
