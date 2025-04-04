@@ -604,14 +604,15 @@ class Predictor(BasePredictor):
             Image.fromarray(img_np).save(tmp_img.name)
             train_img = Path(tmp_img.name)
         debug_media = train_img
+        export_folder = None
         if export_train:
-            folder_path = self.export_train_folder(annotations_path, [train_img])
-            debug_media = folder_path
+            export_folder = self.export_train_folder(annotations_path, [train_img])
         return Output(
             annotations=annotations_path,
             debug_media=debug_media,
             num_people=len(all_results),
             media_type="image",
+            export_train_folder=export_folder
         )
 
     def process_video(
