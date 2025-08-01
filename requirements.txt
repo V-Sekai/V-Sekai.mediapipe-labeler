@@ -1,0 +1,19 @@
+# Core ML/Computer Vision frameworks
+opencv-python==4.10.0.84
+mediapipe==0.10.14
+torch==2.4.1
+torchvision==0.19.1
+
+# Image and video processing
+pillow==10.4.0
+moviepy==1.0.3
+
+# Data visualization and progress tracking
+matplotlib==3.9.2
+tqdm==4.66.5
+
+# Utilities
+natsort==8.4.0
+
+# Cog framework
+cog>=0.9.0

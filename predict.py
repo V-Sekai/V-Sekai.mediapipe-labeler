@@ -27,6 +27,7 @@ from mediapipe.tasks.python import vision
 from cog import BasePredictor, Input, Path
 from PIL import Image
 import shutil
+from typing import Optional
 from filters import OneEuroFilter
 from models import Output
 from models import (
@@ -117,7 +118,7 @@ class Predictor(BasePredictor):
         export_train: bool = Input(
             description="Export training zip containing json annotations and frame pngs", default=True
         ),
-        aligned_media: Path = Input(
+        aligned_media: Optional[Path] = Input(
             description="Optional video that is aligned with the input video's annotations", 
             default=None
         )
